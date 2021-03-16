@@ -4,18 +4,15 @@
 import math
 from collections import OrderedDict
 
-import torch
-
 import pyro
 import pyro.distributions as dist
+import torch
 from pyro.distributions.testing.fakes import NonreparameterizedNormal
-from pyro.distributions.util import scalar_like
 from pyro.infer.autoguide import init_to_uniform
-from pyro.infer.mcmc.adaptation import WarmupAdapter
 from pyro.infer.mcmc.mcmc_kernel import MCMCKernel
 from pyro.infer.mcmc.util import initialize_model
-from pyro.ops.integrator import potential_grad, velocity_verlet
-from pyro.util import optional, torch_isnan
+from pyro.ops.integrator import potential_grad
+from pyro.util import optional
 
 
 def sghmc_stepper(z, r, potential_fn, kinetic_grad, step_size, friction=0.1, num_steps=1, z_grads=None):
@@ -40,13 +37,7 @@ def sghmc_stepper(z, r, potential_fn, kinetic_grad, step_size, friction=0.1, num
     z_next = z.copy()
     r_next = r.copy()
     for _ in range(num_steps):
-        z_next, r_next, z_grads, potential_energy = _single_sghmc_step(z_next,
-                                                                       r_next,
-                                                                       potential_fn,
-                                                                       kinetic_grad,
-                                                                       step_size,
-                                                                       friction,
-                                                                       z_grads)
+        z_next, r_next, z_grads, potential_energy = _single_sghmc_step(z_next, r_next, potential_fn, kinetic_grad, step_size, friction, z_grads)
     return z_next, r_next, z_grads, potential_energy
 
 
@@ -68,6 +59,10 @@ def _single_sghmc_step(z, r, potential_fn, kinetic_grad, step_size, friction, z_
                        + noise
 
     return z, r, z_grads, potential_energy
+
+
+def kinetic_grad(r):
+    return r.copy()
 
 
 class SGHMC(MCMCKernel):
@@ -149,22 +144,17 @@ class SGHMC(MCMCKernel):
                  step_size=1,
                  trajectory_length=None,
                  num_steps=None,
-                 adapt_step_size=True,
-                 adapt_mass_matrix=True,
-                 full_mass=False,
                  transforms=None,
-                 max_plate_nesting=None,
                  jit_compile=False,
                  jit_options=None,
                  ignore_jit_warnings=False,
-                 target_accept_prob=1.0,
                  init_strategy=init_to_uniform):
         if not ((model is None) ^ (potential_fn is None)):
             raise ValueError("Only one of `model` or `potential_fn` must be specified.")
         # NB: deprecating args - model, transforms
         self.model = model
         self.transforms = transforms
-        self._max_plate_nesting = max_plate_nesting
+        self.step_size = step_size
         self._jit_compile = jit_compile
         self._jit_options = jit_options
         self._ignore_jit_warnings = ignore_jit_warnings
@@ -183,11 +173,6 @@ class SGHMC(MCMCKernel):
         self._direction_threshold = math.log(0.8)  # from Stan
         self._max_sliced_energy = 1000
         self._reset()
-        self._adapter = WarmupAdapter(step_size,
-                                      adapt_step_size=adapt_step_size,
-                                      adapt_mass_matrix=adapt_mass_matrix,
-                                      target_accept_prob=target_accept_prob,
-                                      dense_mass=full_mass)
         super().__init__()
 
     def _kinetic_energy(self, r_unscaled):
@@ -208,77 +193,15 @@ class SGHMC(MCMCKernel):
         self._z_grads_last = None
         self._warmup_steps = None
 
-    def _find_reasonable_step_size(self, z):
-        step_size = self.step_size
-
-        # We are going to find a step_size which make accept_prob (Metropolis correction)
-        # near the target_accept_prob. If accept_prob:=exp(-delta_energy) is small,
-        # then we have to decrease step_size; otherwise, increase step_size.
-        potential_energy = self.potential_fn(z)
-        r, r_unscaled = self._sample_r(name="r_presample_0")
-        energy_current = self._kinetic_energy(r_unscaled) + potential_energy
-        # This is required so as to avoid issues with autograd when model
-        # contains transforms with cache_size > 0 (https://github.com/pyro-ppl/pyro/issues/2292)
-        z = {k: v.clone() for k, v in z.items()}
-        z_new, r_new, z_grads_new, potential_energy_new = sghmc_stepper(
-            z, r, self.potential_fn, self.mass_matrix_adapter.kinetic_grad, step_size)
-        r_new_unscaled = self.mass_matrix_adapter.unscale(r_new)
-        energy_new = self._kinetic_energy(r_new_unscaled) + potential_energy_new
-        delta_energy = energy_new - energy_current
-        # direction=1 means keep increasing step_size, otherwise decreasing step_size.
-        # Note that the direction is -1 if delta_energy is `NaN` which may be the
-        # case for a diverging trajectory (e.g. in the case of evaluating log prob
-        # of a value simulated using a large step size for a constrained sample site).
-        direction = 1 if self._direction_threshold < -delta_energy else -1
-
-        # define scale for step_size: 2 for increasing, 1/2 for decreasing
-        step_size_scale = 2 ** direction
-        direction_new = direction
-        # keep scale step_size until accept_prob crosses its target
-        # TODO: make thresholds for too small step_size or too large step_size
-        t = 0
-        while direction_new == direction:
-            t += 1
-            step_size = step_size_scale * step_size
-            r, r_unscaled = self._sample_r(name="r_presample_{}".format(t))
-            energy_current = self._kinetic_energy(r_unscaled) + potential_energy
-            z_new, r_new, z_grads_new, potential_energy_new = sghmc_stepper(
-                z, r, self.potential_fn, self.mass_matrix_adapter.kinetic_grad, step_size)
-            r_new_unscaled = self.mass_matrix_adapter.unscale(r_new)
-            energy_new = self._kinetic_energy(r_new_unscaled) + potential_energy_new
-            delta_energy = energy_new - energy_current
-            direction_new = 1 if self._direction_threshold < -delta_energy else -1
-        return step_size
-
     def _sample_r(self, name):
-        r_unscaled = {}
+        r = {}
         options = {"dtype": self._potential_energy_last.dtype,
                    "device": self._potential_energy_last.device}
-        for site_names, size in self.mass_matrix_adapter.mass_matrix_size.items():
+        for site_names, params in self.initial_params.items():
             # we want to sample from Normal distribution using `sample` method rather than
             # `rsample` method because the former is a bit faster
-            r_unscaled[site_names] = pyro.sample(
-                "{}_{}".format(name, site_names),
-                NonreparameterizedNormal(torch.zeros(size, **options), torch.ones(size, **options)))
-
-        r = self.mass_matrix_adapter.scale(r_unscaled, r_prototype=self.initial_params)
-        return r, r_unscaled
-
-    @property
-    def mass_matrix_adapter(self):
-        return self._adapter.mass_matrix_adapter
-
-    @mass_matrix_adapter.setter
-    def mass_matrix_adapter(self, value):
-        self._adapter.mass_matrix_adapter = value
-
-    @property
-    def inverse_mass_matrix(self):
-        return self.mass_matrix_adapter.inverse_mass_matrix
-
-    @property
-    def step_size(self):
-        return self._adapter.step_size
+            r[site_names] = pyro.sample("{}_{}".format(name, site_names), NonreparameterizedNormal(torch.zeros(params.shape, **options), torch.ones(params.shape, **options)))
+        return r
 
     @property
     def num_steps(self):
@@ -298,7 +221,6 @@ class SGHMC(MCMCKernel):
             model_args,
             model_kwargs,
             transforms=self.transforms,
-            max_plate_nesting=self._max_plate_nesting,
             jit_compile=self._jit_compile,
             jit_options=self._jit_options,
             skip_jit_warnings=self._ignore_jit_warnings,
@@ -310,44 +232,6 @@ class SGHMC(MCMCKernel):
         self._initial_params = init_params
         self._prototype_trace = trace
 
-    def _initialize_adapter(self):
-        if self._adapter.dense_mass is False:
-            dense_sites_list = []
-        elif self._adapter.dense_mass is True:
-            dense_sites_list = [tuple(sorted(self.initial_params))]
-        else:
-            msg = "full_mass should be a list of tuples of site names."
-            dense_sites_list = self._adapter.dense_mass
-            assert isinstance(dense_sites_list, list), msg
-            for dense_sites in dense_sites_list:
-                assert dense_sites and isinstance(dense_sites, tuple), msg
-                for name in dense_sites:
-                    assert isinstance(name, str) and name in self.initial_params, msg
-        dense_sites_set = set().union(*dense_sites_list)
-        diag_sites = tuple(sorted([name for name in self.initial_params
-                                   if name not in dense_sites_set]))
-        assert len(diag_sites) + sum([len(sites) for sites in dense_sites_list]) == len(self.initial_params), \
-            "Site names specified in full_mass are duplicated."
-
-        mass_matrix_shape = OrderedDict()
-        for dense_sites in dense_sites_list:
-            size = sum([self.initial_params[site].numel() for site in dense_sites])
-            mass_matrix_shape[dense_sites] = (size, size)
-
-        if diag_sites:
-            size = sum([self.initial_params[site].numel() for site in diag_sites])
-            mass_matrix_shape[diag_sites] = (size,)
-
-        options = {"dtype": self._potential_energy_last.dtype,
-                   "device": self._potential_energy_last.device}
-        self._adapter.configure(self._warmup_steps,
-                                mass_matrix_shape=mass_matrix_shape,
-                                find_reasonable_step_size_fn=self._find_reasonable_step_size,
-                                options=options)
-
-        if self._adapter.adapt_step_size:
-            self._adapter.reset_step_size_adaptation(self._initial_params)
-
     def setup(self, warmup_steps, *args, **kwargs):
         self._warmup_steps = warmup_steps
         if self.model is not None:
@@ -358,8 +242,6 @@ class SGHMC(MCMCKernel):
         else:
             z_grads, potential_energy = {}, self.potential_fn(self.initial_params)
         self._cache(self.initial_params, potential_energy, z_grads)
-        if self.initial_params:
-            self._initialize_adapter()
 
     def cleanup(self):
         self._reset()
@@ -390,32 +272,14 @@ class SGHMC(MCMCKernel):
             if self._t > self._warmup_steps:
                 self._accept_cnt += 1
             return params
-        r, r_unscaled = self._sample_r(name="r_t={}".format(self._t))
-        energy_current = self._kinetic_energy(r_unscaled) + potential_energy
+        r = self._sample_r(name="r_t={}".format(self._t))
 
         # Temporarily disable distributions args checking as
         # NaNs are expected during step size adaptation
         with optional(pyro.validation_enabled(False), self._t < self._warmup_steps):
-            z_new, r_new, z_grads_new, potential_energy_new = sghmc_stepper(
-                z, r, self.potential_fn, self.mass_matrix_adapter.kinetic_grad,
-                self.step_size, self.num_steps, z_grads=z_grads)
-            # apply Metropolis correction.
-            r_new_unscaled = self.mass_matrix_adapter.unscale(r_new)
-            energy_proposal = self._kinetic_energy(r_new_unscaled) + potential_energy_new
+            z_new, r_new, z_grads_new, potential_energy_new = sghmc_stepper(z, r, self.potential_fn, kinetic_grad, self.step_size, self.num_steps, z_grads=z_grads)
 
-
-        accepted = True
-
-        self._t += 1
-        if self._t > self._warmup_steps:
-            n = self._t - self._warmup_steps
-            if accepted:
-                self._accept_cnt += 1
-        else:
-            n = self._t
-            self._adapter.step(self._t, z, 1.0, z_grads)
-
-        return z.copy()
+        return z_new.copy()
 
     def logging(self):
         return OrderedDict([
