@@ -14,7 +14,7 @@ from pyro.ops.integrator import potential_grad
 import itertools
 
 
-def sghmc_proposal(z, r, potential_fn, step_size, friction=0.1, num_steps=1):
+def sghmc_proposal(z, r, potential_fn, step_size, num_steps=1, friction=0.1):
     r"""
     SGHMC dynamics simulation to generate new proposal state
     """
@@ -83,6 +83,7 @@ class SGHMC(MCMCKernel):
                  potential_fn=None,
                  step_size=1,
                  trajectory_length=None,
+                 friction=0.1,
                  num_steps=None,
                  transforms=None):
         if not ((model is None) ^ (potential_fn is None)):
@@ -91,6 +92,7 @@ class SGHMC(MCMCKernel):
         self.model = model
         self.transforms = transforms
         self.step_size = step_size
+        self.friction = friction
 
         self.potential_fn = potential_fn
         if trajectory_length is not None:
@@ -191,7 +193,8 @@ class SGHMC(MCMCKernel):
 
         r = self._sample_r(name="r_t={}".format(self._t))
 
-        z_new, _ = sghmc_proposal(z, r, self.potential_fn, self.step_size, self.num_steps)
+        z_new, _ = sghmc_proposal(z, r, self.potential_fn, self.step_size, num_steps=self.num_steps, friction=self.friction)
+        self._cache(z_new)
 
         self._t += 1
 
