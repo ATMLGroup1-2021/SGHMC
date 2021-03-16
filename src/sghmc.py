@@ -13,9 +13,10 @@ from pyro.infer.mcmc.mcmc_kernel import MCMCKernel
 from pyro.infer.mcmc.util import initialize_model
 from pyro.ops.integrator import potential_grad
 from pyro.util import optional
+import itertools
 
 
-def sghmc_stepper(z, r, potential_fn, kinetic_grad, step_size, friction=0.1, num_steps=1, z_grads=None):
+def sghmc_stepper(z, r, potential_fn, kinetic_grad, step_size, friction=0.1, num_steps=1):
     r"""
     Second order symplectic integrator that uses the velocity verlet algorithm.
     :param dict z: dictionary of sample site names and their current values
@@ -37,11 +38,11 @@ def sghmc_stepper(z, r, potential_fn, kinetic_grad, step_size, friction=0.1, num
     z_next = z.copy()
     r_next = r.copy()
     for _ in range(num_steps):
-        z_next, r_next, z_grads, potential_energy = _single_sghmc_step(z_next, r_next, potential_fn, kinetic_grad, step_size, friction, z_grads)
-    return z_next, r_next, z_grads, potential_energy
+        z_next, r_next, z_grads, potential_energy = _single_sghmc_step(z_next, r_next, potential_fn, kinetic_grad, step_size, friction)
+    return z_next, r_next, potential_energy
 
 
-def _single_sghmc_step(z, r, potential_fn, kinetic_grad, step_size, friction, z_grads=None):
+def _single_sghmc_step(z, r, potential_fn, kinetic_grad, step_size, friction):
     r"""
     Single step velocity verlet that modifies the `z`, `r` dicts in place.
     """
@@ -195,12 +196,10 @@ class SGHMC(MCMCKernel):
 
     def _sample_r(self, name):
         r = {}
-        options = {"dtype": self._potential_energy_last.dtype,
-                   "device": self._potential_energy_last.device}
         for site_names, params in self.initial_params.items():
             # we want to sample from Normal distribution using `sample` method rather than
             # `rsample` method because the former is a bit faster
-            r[site_names] = pyro.sample("{}_{}".format(name, site_names), NonreparameterizedNormal(torch.zeros(params.shape, **options), torch.ones(params.shape, **options)))
+            r[site_names] = pyro.sample("{}_{}".format(name, site_names), NonreparameterizedNormal(torch.zeros_like(params, dtype=torch.float32), torch.ones_like(params, dtype=torch.float32)))
         return r
 
     @property
@@ -233,51 +232,47 @@ class SGHMC(MCMCKernel):
         self._prototype_trace = trace
 
     def setup(self, warmup_steps, *args, **kwargs):
+        self.data_loader = itertools.cycle(iter(args[0]))
+        args = (next(self.data_loader),)
         self._warmup_steps = warmup_steps
         if self.model is not None:
             self._initialize_model_properties(args, kwargs)
         if self.initial_params:
             z = {k: v.detach() for k, v in self.initial_params.items()}
-            z_grads, potential_energy = potential_grad(self.potential_fn, z)
-        else:
-            z_grads, potential_energy = {}, self.potential_fn(self.initial_params)
-        self._cache(self.initial_params, potential_energy, z_grads)
+        self._cache(self.initial_params)
 
     def cleanup(self):
         self._reset()
 
-    def _cache(self, z, potential_energy, z_grads=None):
+    def _cache(self, z):
         self._z_last = z
-        self._potential_energy_last = potential_energy
-        self._z_grads_last = z_grads
 
     def clear_cache(self):
         self._z_last = None
-        self._potential_energy_last = None
-        self._z_grads_last = None
 
     def _fetch_from_cache(self):
-        return self._z_last, self._potential_energy_last, self._z_grads_last
+        return self._z_last
 
     def sample(self, params):
-        z, potential_energy, z_grads = self._fetch_from_cache()
+        z = self._fetch_from_cache()
         # recompute PE when cache is cleared
         if z is None:
             z = params
-            z_grads, potential_energy = potential_grad(self.potential_fn, z)
-            self._cache(z, potential_energy, z_grads)
+            self._cache(z)
         # return early if no sample sites
         elif len(z) == 0:
             self._t += 1
-            if self._t > self._warmup_steps:
-                self._accept_cnt += 1
             return params
+
+        batch = next(self.data_loader)
+        self._initialize_model_properties((batch, ), {})
+
         r = self._sample_r(name="r_t={}".format(self._t))
 
         # Temporarily disable distributions args checking as
         # NaNs are expected during step size adaptation
         with optional(pyro.validation_enabled(False), self._t < self._warmup_steps):
-            z_new, r_new, z_grads_new, potential_energy_new = sghmc_stepper(z, r, self.potential_fn, kinetic_grad, self.step_size, self.num_steps, z_grads=z_grads)
+            z_new, r_new, potential_energy_new = sghmc_stepper(z, r, self.potential_fn, kinetic_grad, self.step_size, self.num_steps)
 
         return z_new.copy()
 
