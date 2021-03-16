@@ -6,11 +6,12 @@ import matplotlib.pyplot as plt
 import pyro.distributions as dist
 
 def unimodal_sym():
-    return pyro.sample("", dist.Normal(0, 1))
+    return pyro.sample("weight", dist.Normal(0, 1))
 
 def unimodal_unsym():
-    return pyro.sample("", dist.Beta(2,5))
+    return pyro.sample("weight", dist.Beta(2,5))
 
+# Some type error in run bimodal distributions, others run fine
 def bimodal_sym():
     a = pyro.sample("a", dist.Normal(-1, 0.5))
     b = pyro.sample("b", dist.Normal(1, 0.5))
@@ -38,7 +39,7 @@ def trimodal_unsym():
     return [a,b,c][w]
 
 # to see the distribution
-# plt.hist([trimodal_unsym().item() for _ in range(10000)], bins="auto")
+# plt.hist([bimodal_sym().item() for _ in range(10000)], bins="auto")
 # plt.xlabel('value')
 # plt.ylabel('count')
 # plt.show()
