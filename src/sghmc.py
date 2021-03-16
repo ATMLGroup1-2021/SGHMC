@@ -18,7 +18,7 @@ from pyro.ops.integrator import potential_grad, velocity_verlet
 from pyro.util import optional, torch_isnan
 
 
-def velocity_verlet(z, r, potential_fn, kinetic_grad, step_size, num_steps=1, z_grads=None):
+def sghmc_stepper(z, r, potential_fn, kinetic_grad, step_size, friction=0.1, num_steps=1, z_grads=None):
     r"""
     Second order symplectic integrator that uses the velocity verlet algorithm.
     :param dict z: dictionary of sample site names and their current values
@@ -40,37 +40,37 @@ def velocity_verlet(z, r, potential_fn, kinetic_grad, step_size, num_steps=1, z_
     z_next = z.copy()
     r_next = r.copy()
     for _ in range(num_steps):
-        z_next, r_next, z_grads, potential_energy = _single_step_verlet(z_next,
-                                                                        r_next,
-                                                                        potential_fn,
-                                                                        kinetic_grad,
-                                                                        step_size,
-                                                                        z_grads)
+        z_next, r_next, z_grads, potential_energy = _single_sghmc_step(z_next,
+                                                                       r_next,
+                                                                       potential_fn,
+                                                                       kinetic_grad,
+                                                                       step_size,
+                                                                       friction,
+                                                                       z_grads)
     return z_next, r_next, z_grads, potential_energy
 
 
-def _single_step_verlet(z, r, potential_fn, kinetic_grad, step_size, z_grads=None):
+def _single_sghmc_step(z, r, potential_fn, kinetic_grad, step_size, friction, z_grads=None):
     r"""
     Single step velocity verlet that modifies the `z`, `r` dicts in place.
     """
 
-    z_grads = potential_grad(potential_fn, z)[0] if z_grads is None else z_grads
-
-    for site_name in r:
-        r[site_name] = r[site_name] + 0.5 * step_size * (-z_grads[site_name])  # r(n+1/2)
-
     r_grads = kinetic_grad(r)
     for site_name in z:
-        z[site_name] = z[site_name] + step_size * r_grads[site_name]  # z(n+1)
+        z[site_name] = z[site_name] + step_size * r_grads[site_name]
 
     z_grads, potential_energy = potential_grad(potential_fn, z)
     for site_name in r:
-        r[site_name] = r[site_name] + 0.5 * step_size * (-z_grads[site_name])  # r(n+1)
+        noise = pyro.sample(f"r_noise_{site_name}", dist.Normal(torch.zeros_like(r[site_name]), 2 * friction * step_size))
+        r[site_name] = r[site_name] \
+                       - step_size * friction * r_grads[site_name] \
+                       - step_size * z_grads[site_name] \
+                       + noise
 
     return z, r, z_grads, potential_energy
 
 
-class HMC(MCMCKernel):
+class SGHMC(MCMCKernel):
     r"""
     Simple Hamiltonian Monte Carlo kernel, where ``step_size`` and ``num_steps``
     need to be explicitly specified by the user.
@@ -157,7 +157,7 @@ class HMC(MCMCKernel):
                  jit_compile=False,
                  jit_options=None,
                  ignore_jit_warnings=False,
-                 target_accept_prob=0.8,
+                 target_accept_prob=1.0,
                  init_strategy=init_to_uniform):
         if not ((model is None) ^ (potential_fn is None)):
             raise ValueError("Only one of `model` or `potential_fn` must be specified.")
@@ -220,7 +220,7 @@ class HMC(MCMCKernel):
         # This is required so as to avoid issues with autograd when model
         # contains transforms with cache_size > 0 (https://github.com/pyro-ppl/pyro/issues/2292)
         z = {k: v.clone() for k, v in z.items()}
-        z_new, r_new, z_grads_new, potential_energy_new = velocity_verlet(
+        z_new, r_new, z_grads_new, potential_energy_new = sghmc_stepper(
             z, r, self.potential_fn, self.mass_matrix_adapter.kinetic_grad, step_size)
         r_new_unscaled = self.mass_matrix_adapter.unscale(r_new)
         energy_new = self._kinetic_energy(r_new_unscaled) + potential_energy_new
@@ -242,7 +242,7 @@ class HMC(MCMCKernel):
             step_size = step_size_scale * step_size
             r, r_unscaled = self._sample_r(name="r_presample_{}".format(t))
             energy_current = self._kinetic_energy(r_unscaled) + potential_energy
-            z_new, r_new, z_grads_new, potential_energy_new = velocity_verlet(
+            z_new, r_new, z_grads_new, potential_energy_new = sghmc_stepper(
                 z, r, self.potential_fn, self.mass_matrix_adapter.kinetic_grad, step_size)
             r_new_unscaled = self.mass_matrix_adapter.unscale(r_new)
             energy_new = self._kinetic_energy(r_new_unscaled) + potential_energy_new
@@ -387,7 +387,6 @@ class HMC(MCMCKernel):
         # return early if no sample sites
         elif len(z) == 0:
             self._t += 1
-            self._mean_accept_prob = 1.
             if self._t > self._warmup_steps:
                 self._accept_cnt += 1
             return params
@@ -397,28 +396,15 @@ class HMC(MCMCKernel):
         # Temporarily disable distributions args checking as
         # NaNs are expected during step size adaptation
         with optional(pyro.validation_enabled(False), self._t < self._warmup_steps):
-            z_new, r_new, z_grads_new, potential_energy_new = velocity_verlet(
+            z_new, r_new, z_grads_new, potential_energy_new = sghmc_stepper(
                 z, r, self.potential_fn, self.mass_matrix_adapter.kinetic_grad,
                 self.step_size, self.num_steps, z_grads=z_grads)
             # apply Metropolis correction.
             r_new_unscaled = self.mass_matrix_adapter.unscale(r_new)
             energy_proposal = self._kinetic_energy(r_new_unscaled) + potential_energy_new
-        delta_energy = energy_proposal - energy_current
-        # handle the NaN case which may be the case for a diverging trajectory
-        # when using a large step size.
-        delta_energy = scalar_like(delta_energy, float("inf")) if torch_isnan(delta_energy) else delta_energy
-        if delta_energy > self._max_sliced_energy and self._t >= self._warmup_steps:
-            self._divergences.append(self._t - self._warmup_steps)
 
-        accept_prob = (-delta_energy).exp().clamp(max=1.)
-        rand = pyro.sample("rand_t={}".format(self._t), dist.Uniform(scalar_like(accept_prob, 0.),
-                                                                     scalar_like(accept_prob, 1.)))
-        accepted = False
-        if rand < accept_prob:
-            accepted = True
-            z = z_new
-            z_grads = z_grads_new
-            self._cache(z, potential_energy_new, z_grads)
+
+        accepted = True
 
         self._t += 1
         if self._t > self._warmup_steps:
@@ -427,17 +413,14 @@ class HMC(MCMCKernel):
                 self._accept_cnt += 1
         else:
             n = self._t
-            self._adapter.step(self._t, z, accept_prob, z_grads)
+            self._adapter.step(self._t, z, 1.0, z_grads)
 
-        self._mean_accept_prob += (accept_prob.item() - self._mean_accept_prob) / n
         return z.copy()
 
     def logging(self):
         return OrderedDict([
             ("step size", "{:.2e}".format(self.step_size)),
-            ("acc. prob", "{:.3f}".format(self._mean_accept_prob))
         ])
 
     def diagnostics(self):
-        return {"divergences": self._divergences,
-                "acceptance rate": self._accept_cnt / (self._t - self._warmup_steps)}
+        return {"divergences": self._divergences,}
