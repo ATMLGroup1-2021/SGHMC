@@ -3,6 +3,7 @@ import pyro.distributions as dist
 import torch
 from torch.utils.data import Dataset
 from functools import partial
+from torch import matmul
 
 
 class _2dGaussianDataset(Dataset):
@@ -43,7 +44,8 @@ def _2d_gaussian(likelihood_mean, likelihood_covar, num_samples):
     sample_mean = dataset.dataset.mean(dim=0)
 
     posterior_covar = torch.inverse(inv_prior_covar + num_samples * inv_likelihood_covar)
-    posterior_mean = posterior_covar \
-                     * (inv_prior_covar * prior_mean + num_samples * inv_likelihood_covar * sample_mean)
+    posterior_mean = matmul(posterior_covar,
+                            matmul(inv_prior_covar, prior_mean) +
+                            num_samples * matmul(inv_likelihood_covar, sample_mean))
 
     return dataset, model, dist.MultivariateNormal(posterior_mean, covariance_matrix=posterior_covar)
