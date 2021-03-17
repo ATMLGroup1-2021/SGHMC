@@ -21,7 +21,7 @@ class DistributionDataset(Dataset):
 
 def _2d_gaussian_model(data, likelihood_covar):
     mean = pyro.sample('mean', dist.MultivariateNormal(torch.zeros(2),
-                                                       covariance_matrix=torch.diag(torch.tensor([5, 5]))))
+                                                       covariance_matrix=torch.diag(torch.tensor([20, 20]))))
     obs = pyro.sample('obs', dist.MultivariateNormal(mean, likelihood_covar), obs=data)
     return obs
 
@@ -79,7 +79,7 @@ def gamma_possion_model(data):
 
 def gamma_possion(rate, num_samples):
     '''
-        Takes in real p and num_samples, and creates dataset of num_samples draws from Bernoulli(p)
+        Takes in real rate and num_samples, and creates dataset of num_samples draws from Poisson(rate)
         Returns model, dataset, and analytic posterior
     '''
 
