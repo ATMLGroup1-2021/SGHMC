@@ -57,6 +57,10 @@ class BNN(pyro.nn.PyroModule):
         self.lambda_b = pyro.nn.PyroSample(dist.Gamma(gamma_prior_alpha, gamma_prior_beta))
 
         self.fc1 = PyroLinear(input_size, hidden_size)
+        # they said in the paper the distribution is Normal and probability is proportional to exp(-lambda)
+        # so I deduce that this Normal has mean=0 and variance=1/(2*self.lambda_A)
+        # I think directly writing sqrt(1/(2*self.lambda_A)) will produce error, but don't know the correct way
+        # TODO
         self.fc1.weight = pyro.nn.PyroSample(dist.Normal(normal_mean, sqrt(1/(2*self.lambda_A))).expand([hidden_size, input_size]))
         self.fc1.bias   = pyro.nn.PyroSample(dist.Normal(normal_mean, sqrt(1/(2*self.lambda_a))).expand([hidden_size]))
 
@@ -81,7 +85,9 @@ bnn = BNN(input_size, hidden_size, output_size)
 # run inference
 kernel_alg = HMC if sys.argv[1] == "hmc" else SGHMC
 for _ in range(num_epoches):
+    # TODO
     # I am not sure whether this is correct....
+    # I am fairly confindent that it is not....
     kernel = kernel_alg(bnn)
     mcmc = MCMC(kernel, num_samples = ???, warmup_steps = 100)
     mcmc.run(rng_key, X, Y, D_H)
@@ -95,3 +101,6 @@ for inputs, labels in test_loader:
     accuracy.append(sum(prediction==labels).item()/len(labels))
 print("prediction accuracies in each batch:", accuracy)
 print("average prediction accuracy over all batches:", sum(accuracy)/len(accuracy))
+
+# maybe some plots?
+# TODO
