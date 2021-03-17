@@ -1,3 +1,5 @@
 
-.ipynb_checkpoints/testing-checkpoint.ipynb
 testing.ipynb
+.DS_Store
+.ipynb_checkpoints/
+__pycache__/
