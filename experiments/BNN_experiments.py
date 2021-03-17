@@ -58,8 +58,8 @@ class BNN(pyro.nn.PyroModule):
 
         self.fc1 = PyroLinear(input_size, hidden_size)
         # they said in the paper the distribution is Normal and probability is proportional to exp(-lambda)
-        # so I deduce that this Normal has mean=0 and variance=1/(2*self.lambda_A)
-        # I think directly writing sqrt(1/(2*self.lambda_A)) will produce error, but don't know the correct way
+        # so I deduce that this Normal has mean=0 and variance=1/(2*lambda)
+        # I think directly writing sqrt(1/(2*lambda)) will produce error, but don't know the correct way
         # TODO
         self.fc1.weight = pyro.nn.PyroSample(dist.Normal(normal_mean, sqrt(1/(2*self.lambda_A))).expand([hidden_size, input_size]))
         self.fc1.bias   = pyro.nn.PyroSample(dist.Normal(normal_mean, sqrt(1/(2*self.lambda_a))).expand([hidden_size]))
