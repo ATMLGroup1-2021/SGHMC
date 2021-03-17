@@ -32,23 +32,23 @@ def fig1_experiment():
     mcmc.run(data_loader)
 
     samples_sghmc = mcmc.get_samples()['x']
-    counts, bin_edges = np.histogram(samples_sghmc, bins=50, range=[-2, 2], normed=True)
+    counts, bin_edges = np.histogram(samples_sghmc, bins=25, range=[-2, 2], normed=True)
     bin_centres = (bin_edges[:-1] + bin_edges[1:]) / 2.
     sghmc_dist = np.stack([bin_centres, counts])
-    plt.plot(sghmc_dist[0], sghmc_dist[1])
 
     hmc_kernel = BasicHMC(model1, step_size=0.1, num_steps=4)
     mcmc = MCMC(hmc_kernel, num_samples=2000, warmup_steps=500, num_chains=1)
     mcmc.run(DummyDataset().__getitem__(0))
 
     samples_hmc = mcmc.get_samples()['x']
-    counts, bin_edges = np.histogram(samples_hmc, bins=50, range=[-2, 2], normed=True)
+    counts, bin_edges = np.histogram(samples_hmc, bins=25, range=[-2, 2], normed=True)
     bin_centres = (bin_edges[:-1] + bin_edges[1:]) / 2.
     hmc_dist = np.stack([bin_centres, counts])
 
-    plt.plot(x, dist_plot)
-    plt.plot(sghmc_dist[0], sghmc_dist[1])
-    plt.plot(hmc_dist[0], hmc_dist[1])
+    l0, = plt.plot(x, dist_plot, c="b")
+    l1, = plt.plot(sghmc_dist[0], sghmc_dist[1], marker="x", c="r")
+    l2, = plt.plot(hmc_dist[0], hmc_dist[1], marker="v", c="g")
+    plt.legend([l0, l1, l2], ["PDF", "SGHMC", "HMC"])
     plt.show()
 
 
@@ -67,7 +67,8 @@ def fig3_experiment():
 
     plt.figure(figsize=(6, 6))
     plt.contour(x, y, dist_plot)
-    plt.scatter(samples_sghmc[:, 0], samples_sghmc[:, 1], facecolors='none', edgecolors='r')
+    l1 = plt.scatter(samples_sghmc[:, 0], samples_sghmc[:, 1], facecolors='none', edgecolors='r')
+    plt.legend([l1], ["SGHMC"])
     plt.show()
 
 
