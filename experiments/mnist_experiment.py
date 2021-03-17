@@ -70,6 +70,14 @@ def mode_prediction(x, predictive):
     return preds
 
 
+def sum_prediction(x, predictive):
+    preds = predictive(x)
+    log_prob = preds["_RETURN"]
+    log_prob_sum = torch.sum(log_prob, dim=0)
+    preds = torch.argmax(log_prob_sum, dim=1)
+    return preds
+
+
 def test(predictive, test_loader):
     len_test = len(test_loader)
     pbar = tqdm(range(len_test))
@@ -78,7 +86,7 @@ def test(predictive, test_loader):
 
     with torch.no_grad():
         for i, batch in enumerate(test_loader):
-            y_pred = mode_prediction(batch[0], predictive)
+            y_pred = sum_prediction(batch[0], predictive)
             correct.append(y_pred == batch[1])
             pbar.update()
             pbar.set_postfix_str(f"b={(i+1):d}/{len_test:d}, acc={torch.cat(correct).to(dtype=torch.float32).mean().item():.3f}")
@@ -105,7 +113,7 @@ def train_svi(model, train_loader, num_epochs=1):
 
 
 def test_svi(model, guide, test_loader, num_samples=10):
-    predictive = pyro.infer.Predictive(model=model, guide=guide, num_samples=num_samples)
+    predictive = pyro.infer.Predictive(model=model, guide=guide, num_samples=num_samples, return_sites=("_RETURN", "obs"))
 
     acc = test(predictive, test_loader)
 
@@ -124,7 +132,7 @@ def sample_sghmc(model, train_loader, num_samples, num_burnin):
 
 
 def test_sghmc(model, posterior_samples, test_loader, num_samples=10):
-    predictive = pyro.infer.Predictive(model=model, posterior_samples=posterior_samples, num_samples=num_samples)
+    predictive = pyro.infer.Predictive(model=model, posterior_samples=posterior_samples, num_samples=num_samples, return_sites=("_RETURN", "obs"))
 
     acc = test(predictive, test_loader)
 
@@ -143,10 +151,10 @@ def main():
     bnn = BNN(28 * 28, 100, 10)
 
     guide, _ = train_svi(bnn, train_loader, num_epochs=1)
-    test_svi(bnn, guide, test_loader)
+    test_svi(bnn, guide, test_loader, num_samples=10)
 
-    posterior_samples = sample_sghmc(bnn, train_loader, 500, 250)
-    test_sghmc(bnn, posterior_samples, test_loader)
+    posterior_samples = sample_sghmc(bnn, train_loader, num_samples=800, num_burnin=250)
+    test_sghmc(bnn, posterior_samples, test_loader, num_samples=10)
 
 
 if __name__ == "__main__":
