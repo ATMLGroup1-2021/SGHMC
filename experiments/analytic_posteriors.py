@@ -21,7 +21,7 @@ class DistributionDataset(Dataset):
 
 def _2d_gaussian_model(data, likelihood_covar):
     mean = pyro.sample('mean', dist.MultivariateNormal(torch.zeros(2),
-                                                       covariance_matrix=torch.diag(torch.tensor([20, 20]))))
+                                                       covariance_matrix=torch.diag(torch.tensor([20., 20.]))))
     obs = pyro.sample('obs', dist.MultivariateNormal(mean, likelihood_covar), obs=data)
     return obs
 
@@ -34,7 +34,7 @@ def _2d_gaussian(likelihood_mean, likelihood_covar, num_samples):
 
     dataset = DistributionDataset(dist.MultivariateNormal(likelihood_mean, covariance_matrix=likelihood_covar),
                                  num_samples)
-    model = partial(_2d_gaussian_model, likelihood_covar)
+    model = partial(_2d_gaussian_model, likelihood_covar=likelihood_covar)
 
     prior_mean = torch.zeros(2)
     prior_covar = torch.diag(torch.tensor([5., 5.]))
@@ -71,20 +71,20 @@ def beta_bernoulli(p, num_samples):
     return dataset, model, dist.Beta(1 + successes, 1 + num_samples - successes)
 
 
-def gamma_possion_model(data):
+def gamma_poisson_model(data):
     rate = pyro.sample('p', dist.Gamma(0.001, 0.001))
     y = pyro.sample('y', dist.Poisson(rate), obs=data)
     return y
 
 
-def gamma_possion(rate, num_samples):
+def gamma_poisson(rate, num_samples):
     '''
         Takes in real rate and num_samples, and creates dataset of num_samples draws from Poisson(rate)
         Returns model, dataset, and analytic posterior
     '''
 
     dataset = DistributionDataset(dist.Poisson(rate), num_samples)
-    model = gamma_possion_model
+    model = gamma_poisson_model
 
     occurences = dataset.dataset.sum().item()
 
