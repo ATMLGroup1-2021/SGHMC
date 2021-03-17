@@ -117,7 +117,6 @@ class SGHMC(MCMCKernel):
         self._prototype_trace = None
         self._initial_params = None
         self._z_last = None
-        self._warmup_steps = None
 
     def _sample_r(self, name):
         r = {}
@@ -158,7 +157,6 @@ class SGHMC(MCMCKernel):
         self.data_loader = itertools.cycle(iter(args[0]))
         args = (next(self.data_loader),)
 
-        self._warmup_steps = warmup_steps
         if self.model is not None:
             self._initialize_model_properties(args, kwargs)
         self._cache(self.initial_params)
