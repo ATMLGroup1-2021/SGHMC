@@ -1,5 +1,16 @@
-# Copyright (c) 2017-2019 Uber Technologies, Inc.
-# SPDX-License-Identifier: Apache-2.0
+"""
+Custom implementation of SGHMC in Pyro
+References:
+     1. Pyro: Deep Universal Probabilistic Programming,
+        Eli Bingham, Jonathan P Chen et al.
+        Journal of Machine Learning Research, 20, 28, 2019
+        https://github.com/pyro-ppl/pyro
+
+     2. Stochastic Gradient Hamiltonian Monte Carlo,
+        Tianqi Chen, Emily B. Fox et al.
+        31st International Conference on Machine Learning, ICML 2014, 5, 2 2014
+        https://arxiv.org/abs/1402.4102
+"""
 
 import math
 from collections import OrderedDict
