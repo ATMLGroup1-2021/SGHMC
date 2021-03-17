@@ -87,6 +87,5 @@ def gamma_possion(rate, num_samples):
     model = gamma_possion_model
 
     occurences = dataset.dataset.sum().item()
-    print(occurences)
 
     return dataset, model, dist.Poisson(0.001 + occurences, 0.001 + num_samples)
