@@ -203,8 +203,9 @@ class SGHMC(MCMCKernel):
         r = self._sample_r(name="r_t={}".format(self._t))
 
         z_new, _ = sghmc_proposal(z, r, self.potential_fn, self.step_size, num_steps=self.num_steps, friction=self.friction)
+        _, potential_energy_new = potential_grad(self.potential_fn, z_new)
 
-        if torch.any(torch.isnan(z_new)):
+        if torch.isnan(potential_energy_new):
             return z.copy()
 
         self._cache(z_new)
