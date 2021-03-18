@@ -72,7 +72,7 @@ def beta_bernoulli(p, num_samples):
 
 
 def gamma_poisson_model(data):
-    rate = pyro.sample('p', dist.Gamma(0.001, 0.001))
+    rate = pyro.sample('rate', dist.Gamma(0.001, 0.001))
     y = pyro.sample('y', dist.Poisson(rate), obs=data)
     return y
 
@@ -88,4 +88,4 @@ def gamma_poisson(rate, num_samples):
 
     occurences = dataset.dataset.sum().item()
 
-    return dataset, model, dist.Poisson(0.001 + occurences, 0.001 + num_samples)
+    return dataset, model, dist.Gamma(0.001 + occurences, 0.001 + num_samples)
