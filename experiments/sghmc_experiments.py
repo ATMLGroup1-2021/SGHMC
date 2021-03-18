@@ -140,56 +140,51 @@ def _2d_trajectory_plot(samples, analytical_posterior):
     fig.show()
 
 
-def _2d_plot(sghmc_samples, hmc_samples, analytical_posterior):
+def _2d_contour_plot(sghmc_samples, hmc_samples, analytical_posterior):
     sghmc_bins, xedges, yedges = np.histogram2d(sghmc_samples[:, 0].tolist(), sghmc_samples[:, 1].tolist(),
-                                                bins=[20, 20])
-    xbins = dict(
-        start=xedges[0],
-        end=xedges[-1],
-        size=xedges[1]-xedges[0],
-    )
-    ybins = dict(
-        start=yedges[0],
-        end=yedges[-1],
-        size=yedges[1] - yedges[0],
-    )
-    xcenters = (xedges[:-1] + xedges[1:]) / 2
-    ycenters = (yedges[:-1] + yedges[1:]) / 2
+                                                bins=[10, 10])
+    xbins = dict(size=xedges[1]-xedges[0],)
+    ybins = dict(size=yedges[1] - yedges[0],)
     max_sghmc = max(map(max, sghmc_bins))
 
-    sghmc_plot = go.Contour(
-        z=sghmc_bins,
-        x=xcenters,
-        y=ycenters,
-        contours_coloring="lines",
-        colorscale=[[0, "blue"], [1, "blue"]],
-        contours=dict(
-            start=0.1*max_sghmc,
-            end=max_sghmc,
-            size=0.1*max_sghmc,
-        ),
-    )
-
-    sghmc_plot2 = go.Histogram2dContour(
+    sghmc_plot = go.Histogram2dContour(
         x=sghmc_samples[:, 0].tolist(),
         y=sghmc_samples[:, 1].tolist(),
         contours_coloring="lines",
         colorscale=[[0, "blue"], [1, "blue"]],
-        histnorm="probability"
+        contours=dict(
+            start=0.1 * max_sghmc,
+            end=max_sghmc,
+            size=0.1 * max_sghmc,
+        ),
+        xbins=xbins,
+        ybins=ybins,
     )
+
+    hmc_bins, xedges, yedges = np.histogram2d(hmc_samples[:, 0].tolist(), hmc_samples[:, 1].tolist(), bins=[10, 10])
+    xbins = dict(size=xedges[1] - xedges[0], )
+    ybins = dict(size=yedges[1] - yedges[0], )
+    max_hmc = max(map(max, sghmc_bins))
 
     hmc_plot = go.Histogram2dContour(
         x=hmc_samples[:, 0].tolist(),
         y=hmc_samples[:, 1].tolist(),
         contours_coloring="lines",
         colorscale=[[0, "green"], [1, "green"]],
-        histnorm="probability"
+        contours=dict(
+            start=0.1 * max_hmc,
+            end=max_hmc,
+            size=0.1 * max_hmc,
+        ),
+        xbins=xbins,
+        ybins=ybins,
     )
 
     x_mean = analytical_posterior.mean[0].item()
     y_mean = analytical_posterior.mean[1].item()
-    x_coords, y_coords = torch.meshgrid(torch.linspace(x_mean - 2, x_mean + 2, 100),
-                                        torch.linspace(y_mean - 2, y_mean + 2, 100))
+    xrange = torch.linspace(x_mean - 1, x_mean + 1, 100)
+    yrange = torch.linspace(y_mean - 1, y_mean + 1, 100)
+    x_coords, y_coords = torch.meshgrid(xrange, yrange)
     coords = torch.stack((x_coords, y_coords), dim=2)
 
     max_analytical = analytical_posterior.log_prob(analytical_posterior.mean).exp().item()
@@ -197,18 +192,18 @@ def _2d_plot(sghmc_samples, hmc_samples, analytical_posterior):
 
     analytic_plot = go.Contour(
         z=dist_plot,
-        x=torch.linspace(x_mean - 2, x_mean + 2, 100).tolist(),  # horizontal axis
-        y=torch.linspace(y_mean - 2, y_mean + 2, 100).tolist(),  # vertical axis
+        x=xrange.tolist(),  # horizontal axis
+        y=yrange.tolist(),  # vertical axis
         contours_coloring='lines',
         colorscale=[[0, "red"], [1, "red"]],
         contours=dict(
-            start=0.1*max_analytical,
+            start=0.1 * max_analytical,
             end=max_analytical,
             size=0.1*max_analytical,
         ),
     )
 
-    fig = go.Figure(data=(analytic_plot, hmc_plot))
+    fig = go.Figure(data=(analytic_plot, hmc_plot, sghmc_plot))
     fig.show()
 
 
@@ -241,8 +236,9 @@ def main():
                                                                  step_size=0.05)
 
     # _2d_scatter_plot(gauss_sghmc, gauss_hmc, analytic_posterior)
-    _2d_trajectory_plot(gauss_sghmc, analytic_posterior)
-    _2d_trajectory_plot(gauss_hmc, analytic_posterior)
+    # _2d_trajectory_plot(gauss_sghmc, analytic_posterior)
+    # _2d_trajectory_plot(gauss_hmc, analytic_posterior)
+    _2d_contour_plot(gauss_sghmc, gauss_hmc, analytic_posterior)
 
     # _1d_plot(*(beta_bernoulli_sghmc(0.7, 1000, step_size=0.005)))
     #
