@@ -14,7 +14,7 @@ import torch.nn.functional as F
 import pyro
 import pyro.distributions as dist
 from pyro.infer import SVI, Trace_ELBO, MCMC
-from pyro.optim import SGD
+from pyro.optim import SGD, Adam
 from pyro import nn
 
 from tqdm import tqdm
@@ -100,10 +100,10 @@ def test(predictive, test_loader):
     return acc
 
 
-def train_svi(model, train_loader, num_epochs=1):
+def train_svi(model, train_loader, num_epochs=1, learning_rate=1e-3):
     pyro.clear_param_store()
     guide = AutoDiagonalNormal(model)
-    svi = SVI(model=model, guide=guide, optim=SGD({"lr": 1e-3}), loss=Trace_ELBO(num_particles=1))
+    svi = SVI(model=model, guide=guide, optim=Adam({"lr": learning_rate}), loss=Trace_ELBO(num_particles=1))
     len_train = len(train_loader)
     pbar = tqdm(range(num_epochs * len_train))
     losses = []
@@ -125,11 +125,12 @@ def test_svi(model, guide, test_loader, num_samples=10):
     print()
     print(f"SVI Testing completed\n"
           f"Accuracy: {acc:.3f}")
+    return acc
 
 
-def sample_sghmc(model, train_loader, num_samples, num_burnin, friction=0.1, step_size=0.1):
+def sample_sghmc(model, train_loader, num_samples, num_burnin, friction=0.1, step_size=0.1, resample_r_freq=1):
     pyro.clear_param_store()
-    sghmc_kernel = SGHMC(model, step_size=step_size, num_steps=4, friction=friction)
+    sghmc_kernel = SGHMC(model, step_size=step_size, num_steps=4, friction=friction, resample_r_freq=resample_r_freq)
     mcmc = MCMC(sghmc_kernel, num_samples=num_samples, warmup_steps=num_burnin, disable_progbar=False)
     mcmc.run(train_loader)
     posterior_samples = mcmc.get_samples()
@@ -144,6 +145,7 @@ def test_sghmc(model, posterior_samples, test_loader):
     print()
     print(f"SGHMC Testing completed\n"
           f"Accuracy: {acc:.3f}")
+    return acc
 
 
 
@@ -167,7 +169,7 @@ def compare_sghmc_and_svi_and_standard_NN():
     print()
 
     start = time.time()
-    posterior_samples = sample_sghmc(bnn, train_loader, num_samples=800, num_burnin=50)
+    posterior_samples = sample_sghmc(bnn, train_loader, num_samples=800, num_burnin=50, step_size=5e-2, resample_r_freq=1)
     test_sghmc(bnn, posterior_samples, test_loader)
     end = time.time()
     print("Runtime:", end-start)
@@ -191,15 +193,23 @@ def compare_sghmc_and_svi_and_standard_NN():
 
     nn = NN(28*28, 200, 10)
     loss_function = torch.nn.NLLLoss()# negative log likelihood loss
-    optimizer = torch.optim.Adam(nn.parameters(), lr=0.01)
+    optimizer = torch.optim.Adam(nn.parameters(), lr=0.001)
     start = time.time()
-    for i, data in enumerate(train_loader, 0):
-        inputs, labels = data
-        optimizer.zero_grad()
-        outputs = nn(inputs)
-        loss = loss_function(outputs, labels)
-        loss.backward()
-        optimizer.step()
+    for e in range(5):
+        print("Epoch", e)
+        for i, data in enumerate(train_loader, 0):
+            inputs, labels = data
+            optimizer.zero_grad()
+            outputs = nn(inputs)
+            loss = loss_function(outputs, labels)
+            loss.backward()
+            optimizer.step()
+        accuracy = []
+        for inputs, labels in test_loader:
+            outputs = torch.argmax(nn(inputs), dim=1)
+            accuracy.append(sum(outputs == labels).item() / len(labels))
+        print(sum(accuracy) / len(accuracy))
+
     end = time.time()
     accuracy = []
     for inputs, labels in test_loader:
@@ -211,6 +221,35 @@ def compare_sghmc_and_svi_and_standard_NN():
     print("Runtime:", end-start)
     print()
     print()
+
+
+def tune_svi_hyperparameters():
+    train_dataset = datasets.MNIST('./data', train=True, download=True,
+                                   transform=transforms.Compose([transforms.ToTensor(), ]))
+    test_dataset = datasets.MNIST('./data', train=False, download=True,
+                                  transform=transforms.Compose([transforms.ToTensor(), ]))
+
+    train_loader = DataLoader(train_dataset, batch_size=256, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=256, shuffle=True)
+
+    bnn = BNN(28 * 28, 200, 10)
+
+    lrs = torch.tensor([1e-5, 1e-4, 1e-3, 1e-2])
+    epochs = torch.tensor([1, 2, 3, 4])
+
+    results = torch.zeros(len(lrs), len(epochs))
+
+    for i, lr in enumerate(lrs):
+        for j, e in enumerate(epochs):
+            print(f"LR={lr}, E={e}")
+            guide, _ = train_svi(bnn, train_loader, num_epochs=e, learning_rate=lr)
+            acc = test_svi(bnn, guide, test_loader)
+            results[i, j] = acc
+
+    best = torch.argmax(results).item()
+    print(results)
+    print(f"Best LR={lrs[best%lrs.size()[0]]}, Epochs={epochs[best//lrs.size()[0]]}")
+
 
 def tune_bnn_hyperparameters():
     # try different configurations of batch_size and hidden_size for bnn
@@ -233,10 +272,16 @@ def tune_bnn_hyperparameters():
             print()
             print()
 
+
 def tune_sghmc_hyperparameters():
     # try different configurations of friction and step size for bnn
-    for step_size in [0.05, 0.1, 0.5, 1]:
-        for friction in [0.05, 0.1, 0.15, 0.2, 0.5]:
+    # step_sizes = torch.tensor([1e-3, 1e-2, 1e-1])
+    step_sizes = torch.tensor([1e-2, 3e-2, 5e-2, 7e-2, 9e-2])
+    frictions = torch.tensor([0.05, 0.1, 0.15, 0.2, 0.5])
+    results = torch.zeros(len(step_sizes), len(frictions))
+
+    for i, step_size in enumerate(step_sizes):
+        for j, friction in enumerate(frictions):
             print("Step size is", step_size, "and friction is", friction)
             train_dataset = datasets.MNIST('./data', train=True, download=True, transform=transforms.Compose([transforms.ToTensor(),]))
             test_dataset = datasets.MNIST('./data', train=False, download=True, transform=transforms.Compose([transforms.ToTensor(),]))
@@ -248,11 +293,17 @@ def tune_sghmc_hyperparameters():
 
             start = time.time()
             posterior_samples = sample_sghmc(bnn, train_loader, num_samples=800, num_burnin=50, friction=friction, step_size=step_size)
-            test_sghmc(bnn, posterior_samples, test_loader)
+            acc = test_sghmc(bnn, posterior_samples, test_loader)
             end = time.time()
             print("Runtime is", end-start)
             print()
             print()
+            results[i, j] = acc
+
+    best = torch.argmax(results).item()
+    print(results)
+    print(f"Best LR={step_sizes[best % step_sizes.size()[0]]}, Epochs={frictions[best // step_sizes.size()[0]]}")
+
 
 def sghmc_on_adversarial_examples():
 
@@ -265,16 +316,68 @@ def sghmc_on_adversarial_examples():
     x_letters = np.array([np.array(Image.open("data/not-mnist/%s.png"%(l))) for l in letters]).astype(np.float32) # loads letters data
     x_letters /= np.max(x_letters, axis=(1,2), keepdims=True) # normalise
     x_letters = torch.from_numpy(x_letters)
-    predictive = pyro.infer.Predictive(model=bnn, posterior_samples=posterior_samples)
-    outputs = predictive(x_letters)['obs'].transpose(0,1).tolist()
+    predictive = pyro.infer.Predictive(model=bnn, posterior_samples=posterior_samples, return_sites=["_RETURN"])
+    outputs = predictive(x_letters)['_RETURN']
+    mean_nll = - outputs.mean(0)
+    mean_p = outputs.exp().mean(0)
+
+    plt.figure()
     for i in range(10):
         plt.subplot(2,5,i+1)
-        plt.hist(outputs[i])
+        # plt.hist(outputs[i])
+        plt.bar(list(range(10)), [v.item() for v in mean_nll[i]], width=1.0)
         plt.xlabel('class')
-        plt.ylabel('frequency')
+        if i%5 == 0:
+            plt.ylabel('NLL')
         plt.title(letters[i])
         plt.tight_layout()
-        plt.savefig("figures/sghmc_on_adversarial_examples.jpg")
+    plt.savefig("figures/sghmc_on_adversarial_examples_nll.jpg")
+
+    plt.figure()
+    for i in range(10):
+        plt.subplot(2, 5, i + 1)
+        # plt.hist(outputs[i])
+        plt.bar(list(range(10)), [v.item() for v in mean_p[i]], width=1.0)
+        plt.xlabel('class')
+        if i % 5 == 0:
+            plt.ylabel('Probability')
+        plt.title(letters[i])
+        plt.tight_layout()
+    plt.savefig("figures/sghmc_on_adversarial_examples_p.jpg")
+
+
+    test_dataset = datasets.MNIST('./data', train=False, download=True, transform=transforms.Compose([transforms.ToTensor(),]))
+    test_loader = DataLoader(test_dataset, batch_size=256, shuffle=False)
+    batch = next(iter(test_loader))
+    outputs = predictive(batch[0])['_RETURN']
+    mean_nll = - outputs.mean(0)
+    mean_p = outputs.exp().mean(0)
+    plt.figure()
+    for i in range(10):
+        plt.subplot(2,5,i+1)
+        # plt.hist(outputs[i])
+        plt.bar(list(range(10)), [v.item() for v in mean_nll[i]], width=1.0)
+        plt.xlabel('class')
+        if i%5 == 0:
+            plt.ylabel('NLL')
+        plt.title(str(batch[1][i].item()))
+        plt.tight_layout()
+    plt.savefig("figures/sghmc_on_non_adversarial_examples_nll.jpg")
+    plt.figure()
+    for i in range(10):
+        plt.subplot(2,5,i+1)
+        # plt.hist(outputs[i])
+        plt.bar(list(range(10)), [v.item() for v in mean_p[i]], width=1.0)
+        plt.xlabel('class')
+        if i%5 == 0:
+            plt.ylabel('Probability')
+        plt.title(str(batch[1][i].item()))
+        plt.tight_layout()
+    plt.savefig("figures/sghmc_on_non_adversarial_examples_p.jpg")
+
+    pass
+
 
 if __name__ == "__main__":
     print("Choose an experiment from above to run")
+    compare_sghmc_and_svi_and_standard_NN()

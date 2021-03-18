@@ -96,6 +96,7 @@ class SGHMC(MCMCKernel):
                  trajectory_length=None,
                  friction=0.1,
                  num_steps=None,
+                 resample_r_freq=1,
                  transforms=None):
         if not ((model is None) ^ (potential_fn is None)):
             raise ValueError("Only one of `model` or `potential_fn` must be specified.")
@@ -104,6 +105,7 @@ class SGHMC(MCMCKernel):
         self.transforms = transforms
         self.step_size = step_size
         self.friction = friction
+        self.resample_r_freq = resample_r_freq
 
         self.potential_fn = potential_fn
         if trajectory_length is not None:
@@ -175,21 +177,23 @@ class SGHMC(MCMCKernel):
     def cleanup(self):
         self._reset()
 
-    def _cache(self, z):
+    def _cache(self, z, r):
         self._z_last = z
+        self._r_last = r
 
     def clear_cache(self):
         self._z_last = None
+        self._r_last = None
 
     def _fetch_from_cache(self):
-        return self._z_last
+        return self._z_last, self._r_last
 
     def sample(self, params):
-        z = self._fetch_from_cache()
+        z, r = self._fetch_from_cache()
 
         if z is None:
             z = params
-            self._cache(z)
+            self._cache(z, None)
         # return early if no sample sites
         elif len(z) == 0:
             self._t += 1
@@ -200,15 +204,16 @@ class SGHMC(MCMCKernel):
         # compute negative log likelihood trace
         self._initialize_model_properties((batch, ), {})
 
-        r = self._sample_r(name="r_t={}".format(self._t))
+        if r is None or self._t % self.resample_r_freq == 0:
+            r = self._sample_r(name="r_t={}".format(self._t))
 
-        z_new, _ = sghmc_proposal(z, r, self.potential_fn, self.step_size, num_steps=self.num_steps, friction=self.friction)
+        z_new, r_new = sghmc_proposal(z, r, self.potential_fn, self.step_size, num_steps=self.num_steps, friction=self.friction)
         _, potential_energy_new = potential_grad(self.potential_fn, z_new)
 
         if torch.isnan(potential_energy_new):
             return z.copy()
 
-        self._cache(z_new)
+        self._cache(z_new, r_new)
 
         self._t += 1
 
