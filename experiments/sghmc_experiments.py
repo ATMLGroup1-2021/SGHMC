@@ -19,11 +19,11 @@ distributions, inorder to compare with analytical posterior
 '''
 
 
-def calculate_sghmc(dataset, model, step_size=0.1):
-    data_loader = DataLoader(dataset, 256, shuffle=True)
+def calculate_sghmc(dataset, model, step_size=0.1, num_steps=4, friction=0.1, batch_size=256, num_samples=1000, num_burnin=200, resample_r_freq=1):
+    data_loader = DataLoader(dataset, batch_size, shuffle=True)
 
-    sghmc_kernel = SGHMC(model, step_size=step_size, num_steps=4)
-    mcmc = MCMC(sghmc_kernel, num_samples=1000, warmup_steps=200)
+    sghmc_kernel = SGHMC(model, step_size=step_size, num_steps=num_steps, friction=friction, resample_r_freq=resample_r_freq)
+    mcmc = MCMC(sghmc_kernel, num_samples=num_samples, warmup_steps=num_burnin)
     mcmc.run(data_loader)
 
     return mcmc.get_samples()
