@@ -10,7 +10,7 @@ import numpy as np
 import os
 
 folder = "figures/analysis_experiments"
-save = False
+save = True
 if save:
     os.makedirs(folder, exist_ok=True)
 
@@ -86,7 +86,7 @@ def num_steps_fixed_trajectorylength_experiment():
     axs[0].set_aspect(1)
 
     for i, ns in enumerate(num_steps):
-        sghmc_samples = calculate_sghmc(dataset, model, step_size=trajectory_length / ns, num_steps=ns, num_samples=50, num_burnin=0)['mean']
+        sghmc_samples = calculate_sghmc(dataset, model, step_size=trajectory_length / ns, num_steps=ns, num_samples=50, num_burnin=0,  resample_r_freq=25, friction=10)['mean']
         axs[i+1].title.set_text(f'{ns}')
         axs[i+1].plot(sghmc_samples[:, 0].numpy(), sghmc_samples[:, 1].numpy(), '--xb')
         axs[i+1].set_xlim(x_min, x_max)
@@ -119,7 +119,7 @@ def num_steps_fixed_steplength_experiment():
     axs[0].set_aspect(1)
 
     for i, ns in enumerate(num_steps):
-        sghmc_samples = calculate_sghmc(dataset, model, step_size=0.05, num_steps=ns, num_samples=50, num_burnin=0)['mean']
+        sghmc_samples = calculate_sghmc(dataset, model, step_size=0.05, num_steps=ns, num_samples=50, num_burnin=0,  resample_r_freq=25, friction=10)['mean']
         axs[i+1].title.set_text(f'{ns}')
         axs[i+1].plot(sghmc_samples[:, 0].numpy(), sghmc_samples[:, 1].numpy(), '--xb')
         axs[i+1].set_xlim(x_min, x_max)
@@ -196,4 +196,6 @@ def batchsize_experiment():
 
 if __name__ == "__main__":
     # step_size_experiment()
-    step_size_experiment()
+    # step_size_experiment()
+    num_steps_fixed_steplength_experiment()
+    num_steps_fixed_trajectorylength_experiment()
