@@ -9,6 +9,7 @@ import torch
 from torch.utils.data import DataLoader
 from pyro.infer import MCMC
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 currentdir = os.path.dirname(os.path.realpath(__file__))
 parentdir = os.path.dirname(currentdir)
 sys.path.append(parentdir)
@@ -52,37 +53,47 @@ def _2d_gauss_sghmc(likelihood_mean, likelihood_var, dataset_size, step_size=0.1
     return sghmc_samples, hmc_samples, posterior
 
 
-def beta_bernoulli_sghmc(p, num_samples, step_size=0.1):
+def beta_bernoulli_sghmc(p, dataset_size, step_size=0.1, num_steps=4, friction=0.1, batch_size=256, num_samples=1000,
+                         num_burnin=200, resample_r_freq=1):
     # posterior is over p
-    dataset, model, posterior = beta_bernoulli(p, num_samples)
-    sghmc_samples = calculate_sghmc(dataset, model, step_size=step_size)['p']
-    hmc_samples = calculate_hmc(dataset, model, step_size=step_size)['p']
+    dataset, model, posterior = beta_bernoulli(p, dataset_size)
+    sghmc_samples = calculate_sghmc(dataset, model, step_size=step_size, num_steps=num_steps, friction=friction,
+                                    batch_size=batch_size, num_samples=num_samples, num_burnin=num_burnin,
+                                    resample_r_freq=resample_r_freq)['p']
+    hmc_samples = calculate_hmc(dataset, model, step_size=step_size, num_steps=num_steps, num_samples=num_samples,
+                                num_burnin=num_burnin)['p']
 
     return sghmc_samples, hmc_samples, posterior
 
 
-def gamma_poisson_sghmc(rate, num_samples, step_size=0.1):
+def gamma_poisson_sghmc(rate, dataset_size, step_size=0.1, num_steps=4, friction=0.1, batch_size=256, num_samples=1000,
+                         num_burnin=200, resample_r_freq=1):
     # posterior is over rate
-    dataset, model, posterior = gamma_poisson(rate, num_samples)
-    sghmc_samples = calculate_sghmc(dataset, model, step_size=step_size)['rate']
-    hmc_samples = calculate_hmc(dataset, model, step_size=step_size)['rate']
+    dataset, model, posterior = gamma_poisson(rate, dataset_size)
+    sghmc_samples = calculate_sghmc(dataset, model, step_size=step_size, num_steps=num_steps, friction=friction,
+                                    batch_size=batch_size, num_samples=num_samples, num_burnin=num_burnin,
+                                    resample_r_freq=resample_r_freq)['rate']
+    hmc_samples = calculate_hmc(dataset, model, step_size=step_size, num_steps=num_steps, num_samples=num_samples,
+                                num_burnin=num_burnin)['rate']
 
     return sghmc_samples, hmc_samples, posterior
 
 
 def _2d_scatter_plot(sghmc_samples, hmc_samples, analytical_posterior):
     sghmc_plot = go.Scatter(
-        x=sghmc_samples[:, 0].tolist()[0::5],
-        y=sghmc_samples[:, 1].tolist()[0::5],
+        x=sghmc_samples[:, 0].tolist()[0::2],
+        y=sghmc_samples[:, 1].tolist()[0::2],
         mode='markers',
         marker=dict(color="darkturquoise"),
+        name="SGHMC Samples"
     )
 
     hmc_plot = go.Scatter(
-        x=hmc_samples[:, 0].tolist()[0::10],
-        y=hmc_samples[:, 1].tolist()[0::10],
+        x=hmc_samples[:, 0].tolist()[0::2],
+        y=hmc_samples[:, 1].tolist()[0::2],
         mode='markers',
-        marker=dict(color="hotpink")
+        marker=dict(color="hotpink"),
+        name="HMC samples"
     )
 
     x_mean = analytical_posterior.mean[0].item()
@@ -101,23 +112,45 @@ def _2d_scatter_plot(sghmc_samples, hmc_samples, analytical_posterior):
         y=yrange.tolist(),  # vertical axis
         contours_coloring='lines',
         contours=dict(
-            start=0.1,
+            start=0.05*max_analytical,
             end=max_analytical,
             size=0.1*max_analytical,
-        )
+        ),
+        name="Analytical posterior",
+        showscale=False
     )
 
     fig = go.Figure(data=(analytic_plot, sghmc_plot, hmc_plot))
+    fig.update_traces(showlegend=True)
+    fig.update_layout(legend=dict(
+        yanchor="top",
+        y=0.99,
+        xanchor="right",
+        x=0.99
+    ))
+    fig.update_yaxes(range=[y_mean - 0.3, y_mean + 0.3])
+    fig.update_xaxes(range=[x_mean - 0.3, x_mean + 0.3])
     fig.show()
+    fig.write_image("./figures/posterior_experiments/scatter.pdf", scale=2)
 
 
-def _2d_trajectory_plot(samples, analytical_posterior):
-    hmc_plot = go.Scatter(
-        x=samples[:, 0].tolist()[-50::],
-        y=samples[:, 1].tolist()[-50::],
+def _2d_trajectory_plot(sghmc_samples, hmc_samples, analytical_posterior):
+    sghmc_plot = go.Scatter(
+        x=sghmc_samples[:, 0].tolist()[-100::],
+        y=sghmc_samples[:, 1].tolist()[-100::],
         mode='lines+markers',
         marker=dict(color="darkturquoise"),
         line=dict(width=1, color="darkturquoise"),
+        name="SGHMC trajectory"
+    )
+
+    hmc_plot = go.Scatter(
+        x=hmc_samples[:, 0].tolist()[-100::],
+        y=hmc_samples[:, 1].tolist()[-100::],
+        mode='lines+markers',
+        marker=dict(color="hotpink"),
+        line=dict(width=1, color="hotpink"),
+        name="HMC trajectory"
     )
 
     x_mean = analytical_posterior.mean[0].item()
@@ -136,14 +169,30 @@ def _2d_trajectory_plot(samples, analytical_posterior):
         y=yrange.tolist(),  # vertical axis
         contours_coloring='lines',
         contours=dict(
-            start=0.1,
+            start=0.1 * max_analytical,
             end=max_analytical,
             size=0.1 * max_analytical,
-        )
+        ),
+        name="Analytical posterior",
+        showscale=False,
     )
 
-    fig = go.Figure(data=(analytic_plot, hmc_plot))
+    fig = make_subplots(rows=1, cols=2, shared_yaxes=True, shared_xaxes=True)
+    fig.add_trace(analytic_plot, row=1, col=1)
+    fig.add_trace(analytic_plot, row=1, col=2)
+    fig.add_trace(sghmc_plot, row=1, col=1)
+    fig.add_trace(hmc_plot, row=1, col=2)
+    fig.update_traces(showlegend=True)
+    fig.update_layout(legend=dict(
+        yanchor="top",
+        y=0.99,
+        xanchor="right",
+        x=0.99
+    ))
+    fig.update_yaxes(range=[y_mean - 0.25, y_mean + 0.25])
+    fig.update_xaxes(range=[x_mean - 0.25, x_mean + 0.25])
     fig.show()
+    fig.write_image("./figures/posterior_experiments/trajectories.pdf", scale=2)
 
 
 def _2d_contour_plot(sghmc_samples, hmc_samples, analytical_posterior):
@@ -165,6 +214,7 @@ def _2d_contour_plot(sghmc_samples, hmc_samples, analytical_posterior):
         ),
         xbins=xbins,
         ybins=ybins,
+        name="SGHMC approximation"
     )
 
     hmc_bins, xedges, yedges = np.histogram2d(hmc_samples[:, 0].tolist(), hmc_samples[:, 1].tolist(), bins=[10, 10])
@@ -184,6 +234,7 @@ def _2d_contour_plot(sghmc_samples, hmc_samples, analytical_posterior):
         ),
         xbins=xbins,
         ybins=ybins,
+        name='HMC approximation'
     )
 
     x_mean = analytical_posterior.mean[0].item()
@@ -207,13 +258,28 @@ def _2d_contour_plot(sghmc_samples, hmc_samples, analytical_posterior):
             end=max_analytical,
             size=0.1*max_analytical,
         ),
+        name='Analytical posterior'
     )
 
-    fig = go.Figure(data=(analytic_plot, hmc_plot, sghmc_plot))
+    fig = make_subplots(rows=1, cols=3, shared_yaxes=True, shared_xaxes=True)
+    fig.add_trace(analytic_plot, row=1, col=1)
+    fig.add_trace(sghmc_plot, row=1, col=2)
+    fig.add_trace(hmc_plot, row=1, col=3)
+    fig.update_traces(showlegend=True)
+    fig.update_traces(showscale=False)
+    fig.update_layout(legend=dict(
+        yanchor="top",
+        y=0.99,
+        xanchor="right",
+        x=0.99
+    ))
+    fig.update_yaxes(range=[y_mean - 0.25, y_mean + 0.25])
+    fig.update_xaxes(range=[x_mean - 0.25, x_mean + 0.25])
     fig.show()
+    fig.write_image("./figures/posterior_experiments/contours.pdf", scale=2)
 
 
-def _1d_plot(sghmc_samples, hmc_samples, analytical_posterior):
+def _1d_plot(sghmc_samples, hmc_samples, analytical_posterior, type):
     counts, bin_edges = np.histogram(sghmc_samples, bins=25, density=True)
     bin_centres = (bin_edges[:-1] + bin_edges[1:]) / 2.
     sghmc_dist = np.stack([bin_centres, counts])
@@ -231,24 +297,26 @@ def _1d_plot(sghmc_samples, hmc_samples, analytical_posterior):
     l0, = plt.plot(coords, dist_plot, c='b')
 
     plt.ylabel("Probability density")
-    plt.xlabel(r"$\theta$")
+    plt.xlabel(type)
     plt.legend([l0, l1, l2], ["PDF", "SGHMC", "HMC"])
+    plt.savefig("./figures/posterior_experiments/{}.png".format(type))
     plt.show()
 
 
 def main():
-    gauss_sghmc, gauss_hmc, analytic_posterior = \
-        _2d_gauss_sghmc(torch.tensor([5., -8.]), torch.diag(torch.tensor([12., 6.])), 2000, batch_size=512,
-                        step_size=0.02, num_steps=4, num_samples=1000, num_burnin=200, resample_r_freq=25, friction=10)
-
-    # _2d_scatter_plot(gauss_sghmc, gauss_hmc, analytic_posterior)
-    # _2d_trajectory_plot(gauss_sghmc, analytic_posterior)
-    # _2d_trajectory_plot(gauss_hmc, analytic_posterior)
-    _2d_contour_plot(gauss_sghmc, gauss_hmc, analytic_posterior)
-
-    # _1d_plot(*(beta_bernoulli_sghmc(0.7, 1000, step_size=0.005)))
+    # gauss_sghmc, gauss_hmc, analytic_posterior = \
+    #     _2d_gauss_sghmc(torch.tensor([5., -8.]), torch.diag(torch.tensor([12., 6.])), 2000, batch_size=512,
+    #                     step_size=0.02, num_steps=4, num_samples=1000, num_burnin=200, resample_r_freq=25, friction=10)
     #
-    # _1d_plot(*(gamma_poisson_sghmc(10, 1000, step_size=0.005)))
+    # _2d_scatter_plot(gauss_sghmc, gauss_hmc, analytic_posterior)
+    # _2d_trajectory_plot(gauss_sghmc, gauss_hmc, analytic_posterior)
+    # _2d_contour_plot(gauss_sghmc, gauss_hmc, analytic_posterior)
+
+    _1d_plot(*(beta_bernoulli_sghmc(0.7, 1000, batch_size=256, step_size=0.02, num_steps=4, num_samples=1000,
+                                    num_burnin=200, resample_r_freq=25, friction=10)), type="p")
+
+    _1d_plot(*(gamma_poisson_sghmc(10, 1000, batch_size=256, step_size=0.005, num_steps=4, num_samples=1000,
+                                   num_burnin=200, resample_r_freq=25, friction=10)), type="rate")
 
 
 if __name__ == "__main__":

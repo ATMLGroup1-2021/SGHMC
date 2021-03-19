@@ -431,4 +431,4 @@ def sghmc_reproduction(batch_size=256, num_epochs=800):
 
 if __name__ == "__main__":
     print("Choose an experiment from above to run")
-    sghmc_reproduction(512, 50)
+    sghmc_reproduction(512, 100)
