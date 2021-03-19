@@ -19,29 +19,35 @@ distributions, inorder to compare with analytical posterior
 '''
 
 
-def calculate_sghmc(dataset, model, step_size=0.1, num_steps=4, friction=0.1, batch_size=256, num_samples=1000, num_burnin=200, resample_r_freq=1):
+def calculate_sghmc(dataset, model, step_size=0.1, num_steps=4, friction=0.1, batch_size=256, num_samples=1000,
+                    num_burnin=200, resample_r_freq=1):
     data_loader = DataLoader(dataset, batch_size, shuffle=True)
 
-    sghmc_kernel = SGHMC(model, step_size=step_size, num_steps=num_steps, friction=friction, resample_r_freq=resample_r_freq)
+    sghmc_kernel = SGHMC(model, step_size=step_size, num_steps=num_steps, friction=friction,
+                         resample_r_freq=resample_r_freq)
     mcmc = MCMC(sghmc_kernel, num_samples=num_samples, warmup_steps=num_burnin)
     mcmc.run(data_loader)
 
     return mcmc.get_samples()
 
 
-def calculate_hmc(dataset, model, step_size=0.1):
-    hmc_kernel = BasicHMC(model, step_size=step_size, num_steps=4)
-    mcmc = MCMC(hmc_kernel, num_samples=1000, warmup_steps=200)
+def calculate_hmc(dataset, model, step_size=0.1, num_steps=4, num_samples=1000, num_burnin=200):
+    hmc_kernel = BasicHMC(model, step_size=step_size, num_steps=num_steps)
+    mcmc = MCMC(hmc_kernel, num_samples=num_samples, warmup_steps=num_burnin)
     mcmc.run(dataset.dataset)
 
     return mcmc.get_samples()
 
 
-def _2d_gauss_sghmc(likelihood_mean, likelihood_var, num_samples, step_size=0.1):
+def _2d_gauss_sghmc(likelihood_mean, likelihood_var, dataset_size, step_size=0.1, num_steps=4, friction=0.1,
+                    batch_size=256, num_samples=1000, num_burnin=200, resample_r_freq=1):
     # posterior is over likelihood mean
-    dataset, model, posterior = _2d_gaussian(likelihood_mean, likelihood_var, num_samples)
-    sghmc_samples = calculate_sghmc(dataset, model, step_size=step_size)['mean']
-    hmc_samples = calculate_hmc(dataset, model, step_size=step_size)['mean']
+    dataset, model, posterior = _2d_gaussian(likelihood_mean, likelihood_var, dataset_size)
+    sghmc_samples = calculate_sghmc(dataset, model, step_size=step_size, num_steps=num_steps, friction=friction,
+                                    batch_size=batch_size, num_samples=num_samples, num_burnin=num_burnin,
+                                    resample_r_freq=resample_r_freq)['mean']
+    hmc_samples = calculate_hmc(dataset, model, step_size=step_size, num_steps=num_steps, num_samples=num_samples,
+                                num_burnin=num_burnin)['mean']
 
     return sghmc_samples, hmc_samples, posterior
 
@@ -231,9 +237,9 @@ def _1d_plot(sghmc_samples, hmc_samples, analytical_posterior):
 
 
 def main():
-    gauss_sghmc, gauss_hmc, analytic_posterior = _2d_gauss_sghmc(torch.tensor([5., -8.]),
-                                                                 torch.diag(torch.tensor([12., 6.])), 1000,
-                                                                 step_size=0.05)
+    gauss_sghmc, gauss_hmc, analytic_posterior = \
+        _2d_gauss_sghmc(torch.tensor([5., -8.]), torch.diag(torch.tensor([12., 6.])), 2000, batch_size=512,
+                        step_size=0.01, num_steps=4, num_samples=1000, num_burnin=200, resample_r_freq=25, friction=10)
 
     # _2d_scatter_plot(gauss_sghmc, gauss_hmc, analytic_posterior)
     # _2d_trajectory_plot(gauss_sghmc, analytic_posterior)
