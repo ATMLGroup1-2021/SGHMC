@@ -172,7 +172,7 @@ class SGHMC(MCMCKernel):
 
         if self.model is not None:
             self._initialize_model_properties(args, kwargs)
-        self._cache(self.initial_params)
+        self._cache(self.initial_params, None)
 
     def cleanup(self):
         self._reset()
