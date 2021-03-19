@@ -239,7 +239,7 @@ def _1d_plot(sghmc_samples, hmc_samples, analytical_posterior):
 def main():
     gauss_sghmc, gauss_hmc, analytic_posterior = \
         _2d_gauss_sghmc(torch.tensor([5., -8.]), torch.diag(torch.tensor([12., 6.])), 2000, batch_size=512,
-                        step_size=0.01, num_steps=4, num_samples=1000, num_burnin=200, resample_r_freq=25, friction=10)
+                        step_size=0.02, num_steps=4, num_samples=1000, num_burnin=200, resample_r_freq=25, friction=10)
 
     # _2d_scatter_plot(gauss_sghmc, gauss_hmc, analytic_posterior)
     # _2d_trajectory_plot(gauss_sghmc, analytic_posterior)

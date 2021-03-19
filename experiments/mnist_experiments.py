@@ -137,6 +137,19 @@ def sample_sghmc(model, train_loader, num_samples, num_burnin, friction=0.1, ste
     return posterior_samples
 
 
+def manual_init_sample_sghmc(model, train_loader, z, r, num_samples, num_burnin, friction=0.1, step_size=0.1,
+                             resample_r_freq=1, resample_r=False):
+    pyro.clear_param_store()
+    sghmc_kernel = SGHMC(model, step_size=step_size, num_steps=4, friction=friction, resample_r_freq=resample_r_freq,
+                         resample_r=resample_r)
+    sghmc_kernel.manual_initialization(z, r)
+    mcmc = MCMC(sghmc_kernel, num_samples=num_samples, warmup_steps=num_burnin, disable_progbar=False)
+    mcmc.run(train_loader)
+    posterior_samples = mcmc.get_samples()
+    z, r = sghmc_kernel._fetch_from_cache()
+    return posterior_samples, z, r
+
+
 def test_sghmc(model, posterior_samples, test_loader):
     predictive = pyro.infer.Predictive(model=model, posterior_samples=posterior_samples, return_sites=("_RETURN", "obs"))
 
@@ -148,9 +161,7 @@ def test_sghmc(model, posterior_samples, test_loader):
     return acc
 
 
-
 # Our experiments:
-
 def compare_sghmc_and_svi_and_standard_NN():
     train_dataset = datasets.MNIST('./data', train=True, download=True, transform=transforms.Compose([transforms.ToTensor(),]))
     test_dataset = datasets.MNIST('./data', train=False, download=True, transform=transforms.Compose([transforms.ToTensor(),]))
@@ -378,6 +389,46 @@ def sghmc_on_adversarial_examples():
     pass
 
 
+def sghmc_reproduction(batch_size=256, num_epochs=800):
+    train_dataset = datasets.MNIST('./data', train=True, download=True,
+                                   transform=transforms.Compose([transforms.ToTensor(), ]))
+    test_dataset = datasets.MNIST('./data', train=False, download=True,
+                                  transform=transforms.Compose([transforms.ToTensor(), ]))
+
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
+
+    num_samples = int(np.floor(train_dataset.__len__()/batch_size))
+    z = None
+    r = None
+
+    bnn = BNN(28 * 28, 200, 10)
+    posterior_samples = []
+
+    start = time.time()
+    for i in range(num_epochs):
+        print("Epoch {}:".format(i))
+        sample, z, r = manual_init_sample_sghmc(bnn, train_loader, z, r, num_samples=1, num_burnin=num_samples-1,
+                                                step_size=1e-2, resample_r_freq=1, resample_r=False)
+        # test_sghmc(bnn, sample, test_loader)
+        posterior_samples.append(sample)
+
+    test_samples = {}
+    for key in posterior_samples[0].keys():
+        l = []
+        for d in posterior_samples:
+            l.append(d[key])
+        s = torch.cat(l, dim=0)
+        test_samples[key] = s
+
+    test_sghmc(bnn, test_samples, test_loader)
+
+    end = time.time()
+    print("Runtime:", end - start)
+    print()
+    print()
+
+
 if __name__ == "__main__":
     print("Choose an experiment from above to run")
-    compare_sghmc_and_svi_and_standard_NN()
+    sghmc_reproduction(512, 50)

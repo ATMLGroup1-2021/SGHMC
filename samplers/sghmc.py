@@ -96,6 +96,7 @@ class SGHMC(MCMCKernel):
                  trajectory_length=None,
                  friction=0.1,
                  num_steps=None,
+                 resample_r=True,
                  resample_r_freq=1,
                  transforms=None):
         if not ((model is None) ^ (potential_fn is None)):
@@ -105,6 +106,7 @@ class SGHMC(MCMCKernel):
         self.transforms = transforms
         self.step_size = step_size
         self.friction = friction
+        self.resample_r = resample_r
         self.resample_r_freq = resample_r_freq
 
         self.potential_fn = potential_fn
@@ -129,7 +131,7 @@ class SGHMC(MCMCKernel):
         self._divergences = []
         self._prototype_trace = None
         self._initial_params = None
-        self._z_last = None
+        self._initial_momentum = None
 
     def _sample_r(self, name):
         r = {}
@@ -139,6 +141,14 @@ class SGHMC(MCMCKernel):
             r[site_names] = pyro.sample("{}_{}".format(name, site_names),
                                         NonreparameterizedNormal(torch.zeros_like(params, dtype=torch.float32),
                                                                  torch.ones_like(params, dtype=torch.float32)))
+        return r
+
+    def _zero_r(self):
+        r = {}
+        for site_names, params in self.initial_params.items():
+            # we want to sample from Normal distribution using `sample` method rather than
+            # `rsample` method because the former is a bit faster
+            r[site_names] = torch.zeros_like(params, dtype=torch.float32)
         return r
 
     @property
@@ -152,6 +162,10 @@ class SGHMC(MCMCKernel):
     @initial_params.setter
     def initial_params(self, params):
         self._initial_params = params
+
+    def manual_initialization(self, z, r):
+        self._initial_params = z
+        self._initial_momentum = r
 
     def _initialize_model_properties(self, model_args, model_kwargs):
         init_params, potential_fn, transforms, trace = initialize_model(
@@ -172,7 +186,7 @@ class SGHMC(MCMCKernel):
 
         if self.model is not None:
             self._initialize_model_properties(args, kwargs)
-        self._cache(self.initial_params, None)
+        self._cache(self._initial_params, self._initial_momentum)
 
     def cleanup(self):
         self._reset()
@@ -204,8 +218,10 @@ class SGHMC(MCMCKernel):
         # compute negative log likelihood trace
         self._initialize_model_properties((batch, ), {})
 
-        if r is None or self._t % self.resample_r_freq == 0:
+        if (r is None or self._t % self.resample_r_freq == 0) and self.resample_r:
             r = self._sample_r(name="r_t={}".format(self._t))
+        elif r is None and not self.resample_r:
+            r = self._zero_r()
 
         z_new, r_new = sghmc_proposal(z, r, self.potential_fn, self.step_size, num_steps=self.num_steps, friction=self.friction)
         _, potential_energy_new = potential_grad(self.potential_fn, z_new)
