@@ -25,7 +25,7 @@ from pyro.ops.integrator import potential_grad
 import itertools
 
 
-def sghmc_proposal(z, r, potential_fn, step_size, num_steps=1, friction=0.1):
+def sghmc_proposal(z, r, potential_fn, step_size, num_steps=1, friction=0.1, noise_scale=1.0, mult_step_size_on_r=True):
     r"""
     SGHMC dynamics simulation to generate new proposal state
     """
@@ -33,23 +33,27 @@ def sghmc_proposal(z, r, potential_fn, step_size, num_steps=1, friction=0.1):
     r_next = r.copy()
 
     for _ in range(num_steps):
-        z_next, r_next = _single_step_sghmc(z_next, r_next, potential_fn, step_size, friction)
+        z_next, r_next = _single_step_sghmc(z_next, r_next, potential_fn, step_size, friction, noise_scale, mult_step_size_on_r)
 
     return z_next, r_next
 
 
-def _single_step_sghmc(z, r, potential_fn, step_size, friction):
+def _single_step_sghmc(z, r, potential_fn, step_size, friction, noise_scale, mult_step_size_on_r):
     r"""
     Single step SGHMC update that modifies the `z`, `r` dicts in place.
     N.B. Implementation assumes M = I
     """
 
-    for site_name in z:
-        z[site_name] = z[site_name] + step_size * r[site_name]
+    if mult_step_size_on_r:
+        for site_name in z:
+            z[site_name] = z[site_name] + step_size * r[site_name]
+    else:
+        for site_name in z:
+            z[site_name] = z[site_name] + r[site_name]
 
     z_grads, potential_energy = potential_grad(potential_fn, z)
     for site_name in r:
-        noise = pyro.sample(f"r_noise_{site_name}", dist.Normal(torch.zeros_like(r[site_name]), 2 * friction * step_size))
+        noise = pyro.sample(f"r_noise_{site_name}", dist.Normal(torch.zeros_like(r[site_name]), math.sqrt(2 * friction * step_size * noise_scale)))
         r[site_name] = r[site_name] \
                        - step_size * friction * r[site_name] \
                        - step_size * z_grads[site_name] \
@@ -98,6 +102,8 @@ class SGHMC(MCMCKernel):
                  num_steps=None,
                  resample_r=True,
                  resample_r_freq=1,
+                 noise_scale=1.0,
+                 mult_step_size_on_r=True,
                  transforms=None):
         if not ((model is None) ^ (potential_fn is None)):
             raise ValueError("Only one of `model` or `potential_fn` must be specified.")
@@ -108,6 +114,8 @@ class SGHMC(MCMCKernel):
         self.friction = friction
         self.resample_r = resample_r
         self.resample_r_freq = resample_r_freq
+        self.noise_scale = noise_scale
+        self.mult_step_size_on_r = mult_step_size_on_r
 
         self.potential_fn = potential_fn
         if trajectory_length is not None:
@@ -223,7 +231,7 @@ class SGHMC(MCMCKernel):
         elif r is None and not self.resample_r:
             r = self._zero_r()
 
-        z_new, r_new = sghmc_proposal(z, r, self.potential_fn, self.step_size, num_steps=self.num_steps, friction=self.friction)
+        z_new, r_new = sghmc_proposal(z, r, self.potential_fn, self.step_size, num_steps=self.num_steps, friction=self.friction, noise_scale=self.noise_scale, mult_step_size_on_r=self.mult_step_size_on_r)
         _, potential_energy_new = potential_grad(self.potential_fn, z_new)
 
         if torch.isnan(potential_energy_new):
