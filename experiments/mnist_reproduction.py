@@ -1,5 +1,7 @@
 import math
 import os, sys, time
+import pickle
+
 from PIL import Image
 
 import numpy as np
@@ -33,8 +35,8 @@ pyro.set_rng_seed(101)
 PyroLinear = pyro.nn.PyroModule[torch.nn.Linear]
 
 
-sigma = math.sqrt(1/(2e-5))
-# sigma = 1
+# sigma = math.sqrt(1/(2e-5))
+sigma = 1
 
 
 class BNN(pyro.nn.PyroModule):
@@ -221,6 +223,7 @@ def sghmc_reproduction(batch_size=500, num_epochs=800):
     num_previous_predictions = 0
 
     burnin = 50
+    save_freq = 25
 
     single_accs = []
     accs = []
@@ -256,6 +259,10 @@ def sghmc_reproduction(batch_size=500, num_epochs=800):
             accs_ = np.array(accs)
             np.savetxt("single_accs.csv", single_accs_)
             np.savetxt("accs.csv", accs_)
+
+            if (i % save_freq) == 0:
+                with open("posterior_samples.pkl", "wb") as f:
+                    pickle.dump(posterior_samples, file=f)
 
     end = time.time()
     print("Runtime:", end - start)
