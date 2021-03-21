@@ -174,10 +174,14 @@ def initial_weights(bnn, sigma, add_lambdas=False):
         "fc2.bias": fc2_bias
     }
     if add_lambdas:
+        params["fc1.weight"] = fc1_weight.T
+        params["fc2.weight"] = fc2_weight.T
+
         params["lambda_A"] = torch.ones(1)
         params["lambda_a"] = torch.ones(1)
         params["lambda_B"] = torch.ones(1)
         params["lambda_b"] = torch.ones(1)
+    return params
 
 
 def manual_init_sample_sghmc(model, train_loader, z, r, num_samples, num_burnin, friction=0.1, step_size=0.1,
@@ -234,7 +238,7 @@ def sghmc_reproduction(batch_size=500, num_epochs=800):
         if i < 1:
             noise_scale = 0
         else:
-            noise_scale = 0.1 / 60000
+            noise_scale = 0.1 / 50000
         # sample, z, r = manual_init_sample_sghmc(bnn, train_loader, z, r, num_samples=1, num_burnin=num_samples-1, num_steps=1, step_size=1e-2, resample_r_freq=10, resample_r=False, friction=10, noise_scale=noise_scale)
         sample, z, r = manual_init_sample_sghmc(bnn, train_loader, z, r, num_samples=1, num_burnin=num_samples - 1, num_steps=1, step_size=2e-4, resample_r=False, friction=50, noise_scale=noise_scale, mult_step_size_on_r=False)
 
@@ -260,7 +264,7 @@ def sghmc_reproduction(batch_size=500, num_epochs=800):
             np.savetxt("single_accs.csv", single_accs_)
             np.savetxt("accs.csv", accs_)
 
-            if (i % save_freq) == 0:
+            if ((i + 1) % save_freq) == 0:
                 with open("posterior_samples.pkl", "wb") as f:
                     pickle.dump(posterior_samples, file=f)
 
