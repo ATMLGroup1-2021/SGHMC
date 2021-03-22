@@ -1,6 +1,7 @@
 import math
 import os, sys, time
 import pickle
+from typing import Optional, Callable
 
 from PIL import Image
 
@@ -35,8 +36,8 @@ pyro.set_rng_seed(101)
 PyroLinear = pyro.nn.PyroModule[torch.nn.Linear]
 
 
-# sigma = math.sqrt(1/(2e-5))
-sigma = 1
+sigma = math.sqrt(1/(500 * 2e-5))
+# sigma = 1
 
 
 class BNN(pyro.nn.PyroModule):
@@ -207,6 +208,21 @@ def test_sghmc(model, posterior_samples, test_loader):
     return acc
 
 
+class MNIST_50(Dataset):
+
+    def __init__(self, root: str, train: bool = True, transform: Optional[Callable] = None,
+                 target_transform: Optional[Callable] = None, download: bool = False, length=60000) -> None:
+        super().__init__()
+        self.mnist = datasets.MNIST(root, train, transform, target_transform, download)
+        self.length = length
+
+    def __len__(self) -> int:
+        return self.length
+
+    def __getitem__(self, item):
+        return self.mnist.__getitem__(item)
+
+
 def sghmc_reproduction(batch_size=500, num_epochs=800):
     train_dataset = datasets.MNIST('./data', train=True, download=True, transform=transforms.Compose([transforms.ToTensor(), ]))
     test_dataset = datasets.MNIST('./data', train=False, download=True, transform=transforms.Compose([transforms.ToTensor(), ]))
@@ -238,9 +254,9 @@ def sghmc_reproduction(batch_size=500, num_epochs=800):
         if i < 1:
             noise_scale = 0
         else:
-            noise_scale = 0.1 / 50000
+            noise_scale = 0.1 / 60000 # Number of samples in training set
         # sample, z, r = manual_init_sample_sghmc(bnn, train_loader, z, r, num_samples=1, num_burnin=num_samples-1, num_steps=1, step_size=1e-2, resample_r_freq=10, resample_r=False, friction=10, noise_scale=noise_scale)
-        sample, z, r = manual_init_sample_sghmc(bnn, train_loader, z, r, num_samples=1, num_burnin=num_samples - 1, num_steps=1, step_size=2e-4, resample_r=False, friction=50, noise_scale=noise_scale, mult_step_size_on_r=False)
+        sample, z, r = manual_init_sample_sghmc(bnn, train_loader, z, r, num_samples=1, num_burnin=num_samples-1, num_steps=1, step_size=2e-4, resample_r=False, friction=50, noise_scale=noise_scale, mult_step_size_on_r=False)
 
         print("Current sample")
         single_accs.append(test_sghmc(bnn, sample, test_loader))
@@ -261,11 +277,11 @@ def sghmc_reproduction(batch_size=500, num_epochs=800):
 
             single_accs_ = np.array(single_accs)
             accs_ = np.array(accs)
-            np.savetxt("single_accs.csv", single_accs_)
-            np.savetxt("accs.csv", accs_)
+            np.savetxt("results/single_accs.csv", single_accs_)
+            np.savetxt("results/accs.csv", accs_)
 
             if ((i + 1) % save_freq) == 0:
-                with open("posterior_samples.pkl", "wb") as f:
+                with open("results/posterior_samples.pkl", "wb") as f:
                     pickle.dump(posterior_samples, file=f)
 
     end = time.time()
