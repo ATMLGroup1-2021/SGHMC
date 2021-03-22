@@ -30,7 +30,7 @@ from samplers.sghmc import SGHMC
 from pyro.infer.mcmc.nuts import HMC
 
 
-pyro.set_rng_seed(101)
+pyro.set_rng_seed(10101)
 
 
 PyroLinear = pyro.nn.PyroModule[torch.nn.Linear]
