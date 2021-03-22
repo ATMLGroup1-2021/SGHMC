@@ -36,7 +36,7 @@ pyro.set_rng_seed(101)
 PyroLinear = pyro.nn.PyroModule[torch.nn.Linear]
 
 
-sigma = math.sqrt(1/(500 * 2e-5))
+sigma = math.sqrt(1/(500 * 2e-5)) # = 10.0
 # sigma = 1
 
 
@@ -223,8 +223,9 @@ class MNIST_50(Dataset):
         return self.mnist.__getitem__(item)
 
 
-def sghmc_reproduction(batch_size=500, num_epochs=800):
-    train_dataset = datasets.MNIST('./data', train=True, download=True, transform=transforms.Compose([transforms.ToTensor(), ]))
+def sghmc_reproduction(batch_size=500, num_epochs=800, suffix=""):
+    train_dataset = MNIST_50('./data', train=True, download=True, transform=transforms.Compose([transforms.ToTensor(), ]), length=50000)
+    # train_dataset = datasets.MNIST('./data', train=True, download=True, transform=transforms.Compose([transforms.ToTensor(), ]))
     test_dataset = datasets.MNIST('./data', train=False, download=True, transform=transforms.Compose([transforms.ToTensor(), ]))
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False)
@@ -254,7 +255,7 @@ def sghmc_reproduction(batch_size=500, num_epochs=800):
         if i < 1:
             noise_scale = 0
         else:
-            noise_scale = 0.1 / 60000 # Number of samples in training set
+            noise_scale = 0.1 / len(train_dataset) # Number of samples in training set
         # sample, z, r = manual_init_sample_sghmc(bnn, train_loader, z, r, num_samples=1, num_burnin=num_samples-1, num_steps=1, step_size=1e-2, resample_r_freq=10, resample_r=False, friction=10, noise_scale=noise_scale)
         sample, z, r = manual_init_sample_sghmc(bnn, train_loader, z, r, num_samples=1, num_burnin=num_samples-1, num_steps=1, step_size=2e-4, resample_r=False, friction=50, noise_scale=noise_scale, mult_step_size_on_r=False)
 
@@ -277,11 +278,11 @@ def sghmc_reproduction(batch_size=500, num_epochs=800):
 
             single_accs_ = np.array(single_accs)
             accs_ = np.array(accs)
-            np.savetxt("results/single_accs.csv", single_accs_)
-            np.savetxt("results/accs.csv", accs_)
+            np.savetxt(f"results/single_accs{suffix}.csv", single_accs_)
+            np.savetxt(f"results/accs{suffix}.csv", accs_)
 
             if ((i + 1) % save_freq) == 0:
-                with open("results/posterior_samples.pkl", "wb") as f:
+                with open(f"results/posterior_samples{suffix}.pkl", "wb") as f:
                     pickle.dump(posterior_samples, file=f)
 
     end = time.time()
@@ -294,4 +295,4 @@ def sghmc_reproduction(batch_size=500, num_epochs=800):
 
 
 if __name__ == "__main__":
-    sghmc_reproduction(500, 800)
+    sghmc_reproduction(500, 800, "_50")
