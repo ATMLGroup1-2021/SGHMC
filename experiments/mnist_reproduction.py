@@ -56,7 +56,7 @@ class BNN(pyro.nn.PyroModule):
         self.fc2.weight = nn.PyroSample(dist.Normal(0., sigma).expand((output_size, hidden_size)))
         self.fc2.bias = nn.PyroSample(dist.Normal(0., sigma).expand((output_size, )))
 
-        self.relu = torch.nn.ReLU()
+        self.sigmoid = torch.nn.Sigmoid()
         self.log_softmax = torch.nn.LogSoftmax(dim=1)
 
     def forward(self, batch):
@@ -66,7 +66,7 @@ class BNN(pyro.nn.PyroModule):
             x = batch
             y = None
         x = x.view(-1, 28 * 28)
-        x = self.relu(self.fc1(x))
+        x = self.sigmoid(self.fc1(x))
         x = self.fc2(x)
         x = self.log_softmax(x)
 
@@ -295,4 +295,4 @@ def sghmc_reproduction(batch_size=500, num_epochs=800, suffix=""):
 
 
 if __name__ == "__main__":
-    sghmc_reproduction(500, 800, "_50")
+    sghmc_reproduction(500, 800, "_sig")

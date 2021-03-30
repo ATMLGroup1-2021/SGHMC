@@ -1,4 +1,6 @@
+import math
 import sys
+from typing import Optional, Callable
 
 import pyro
 import pyro.distributions as dist
@@ -7,9 +9,10 @@ from pyro import nn
 from pyro.infer import SVI, Trace_ELBO
 from pyro.infer.autoguide import AutoDiagonalNormal
 from pyro.optim import Adam
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from torchvision import datasets, transforms
 from tqdm import tqdm
+import numpy as np
 
 pyro.set_rng_seed(101)
 
@@ -17,8 +20,8 @@ pyro.set_rng_seed(101)
 PyroLinear = pyro.nn.PyroModule[torch.nn.Linear]
 
 
-# sigma = math.sqrt(1/(2e-5))
-sigma = 1
+sigma = math.sqrt(1/(500 * 2e-5))
+# sigma = 1
 
 
 class BNN(pyro.nn.PyroModule):
@@ -37,7 +40,7 @@ class BNN(pyro.nn.PyroModule):
         self.fc2.weight = nn.PyroSample(dist.Normal(0., sigma).expand((output_size, hidden_size)))
         self.fc2.bias = nn.PyroSample(dist.Normal(0., sigma).expand((output_size, )))
 
-        self.relu = torch.nn.ReLU()
+        self.sigmoid = torch.nn.Sigmoid()
         self.log_softmax = torch.nn.LogSoftmax(dim=1)
 
     def forward(self, batch):
@@ -47,7 +50,7 @@ class BNN(pyro.nn.PyroModule):
             x = batch
             y = None
         x = x.view(-1, 28 * 28)
-        x = self.relu(self.fc1(x))
+        x = self.sigmoid(self.fc1(x))
         x = self.fc2(x)
         x = self.log_softmax(x)
 
@@ -55,6 +58,21 @@ class BNN(pyro.nn.PyroModule):
             pyro.sample("obs", dist.Categorical(logits=x), obs=y)
 
         return x
+
+
+class MNIST_50(Dataset):
+
+    def __init__(self, root: str, train: bool = True, transform: Optional[Callable] = None,
+                 target_transform: Optional[Callable] = None, download: bool = False, length=60000) -> None:
+        super().__init__()
+        self.mnist = datasets.MNIST(root, train, transform, target_transform, download)
+        self.length = length
+
+    def __len__(self) -> int:
+        return self.length
+
+    def __getitem__(self, item):
+        return self.mnist.__getitem__(item)
 
 
 def mode_prediction(x, predictive):
@@ -94,7 +112,9 @@ def test(predictive, test_loader):
 
 
 def test_svi(model, guide, test_loader, num_samples=10):
-    predictive = pyro.infer.Predictive(model=model, guide=guide, num_samples=num_samples, return_sites=("_RETURN", "obs"))
+    predictive = pyro.infer.Predictive(model=model, guide=guide, num_samples=num_samples, return_sites=None)
+    posterior_samples = predictive(next(iter(test_loader)))
+    predictive = pyro.infer.Predictive(model=model, posterior_samples=posterior_samples, return_sites=("_RETURN", "obs"))
 
     acc = test(predictive, test_loader)
     return acc
@@ -115,7 +135,7 @@ def train_svi(model, guide, train_loader, test_loader, num_epochs=1, learning_ra
             pbar.update()
             pbar.set_postfix_str(f"e={epoch+1}, b={(i+1):d}/{len_train:d}, loss={loss:.3f}")
 
-        acc = test_svi(model, guide, test_loader, num_samples=100)
+        acc = test_svi(model, guide, test_loader, num_samples=800)
         print("Test Accuracy", acc)
         accs.append(acc)
     sys.stderr.flush()
@@ -125,20 +145,24 @@ def train_svi(model, guide, train_loader, test_loader, num_epochs=1, learning_ra
 
 
 def tune_svi_hyperparameters(model, guide):
-    train_dataset = datasets.MNIST('./data', train=True, download=True, transform=transforms.Compose([transforms.ToTensor(), ]))
+    train_dataset = MNIST_50('./data', train=True, download=True, transform=transforms.Compose([transforms.ToTensor(), ]), length=50000)
     test_dataset = datasets.MNIST('./data', train=False, download=True, transform=transforms.Compose([transforms.ToTensor(), ]))
 
-    train_loader = DataLoader(train_dataset, batch_size=500, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=500, shuffle=True)
+    train_loader = DataLoader(train_dataset, batch_size=500, shuffle=False)
+    test_loader = DataLoader(test_dataset, batch_size=500, shuffle=False)
 
-    lrs = torch.tensor([1e-4, 5e-4, 1e-3, 5e-3])
+    # lrs = torch.tensor([5e-4, 1e-3, 5e-3, 1e-2])
+    lrs = torch.tensor([5e-3])
 
     accss = []
 
     for i, lr in enumerate(lrs):
         print(f"LR={lr}")
-        guide, _, accs = train_svi(model, guide, train_loader, test_loader, num_epochs=10, learning_rate=lr)
+        guide, _, accs = train_svi(model, guide, train_loader, test_loader, num_epochs=50, learning_rate=lr)
         accss.append(accs)
+
+        best_plot = np.array(accss[torch.argmax(torch.tensor([torch.max(torch.tensor(accs)).item() for accs in accss]))])
+        np.savetxt("results/accs_svi.csv", best_plot)
 
     sys.stderr.flush()
     sys.stdout.flush()
@@ -148,6 +172,12 @@ def tune_svi_hyperparameters(model, guide):
     best_accs = [torch.max(torch.tensor(accs)).item() for accs in accss]
     print("Overall bests")
     print(list(zip(lrs, best_accs)))
+
+    best_plot = np.array(accss[torch.argmax(torch.tensor(best_accs))])
+
+    np.savetxt("results/accs_svi.csv", best_plot)
+
+    print(accss[torch.argmax(torch.tensor(best_accs))])
 
 
 if __name__ == "__main__":
