@@ -1,27 +1,18 @@
 import math
 import os, sys, time
 import pickle
-from typing import Optional, Callable
-
-from PIL import Image
 
 import numpy as np
-import matplotlib.pyplot as plt
 
-import torch
 from pyro.infer.autoguide import AutoDiagonalNormal
-from torch.utils.data import Dataset, DataLoader
 from torch.utils.data import DataLoader
-from torchvision import datasets, transforms
-import torch.nn.functional as F
+from torchvision import transforms
 
-import pyro
-import pyro.distributions as dist
-from pyro.infer import SVI, Trace_ELBO, MCMC
-from pyro.optim import SGD, Adam
-from pyro import nn
+from pyro.infer import MCMC
 
 from tqdm import tqdm
+
+from bnn_utils import *
 
 currentdir = os.path.dirname(os.path.realpath(__file__))
 parentdir = os.path.dirname(currentdir)
@@ -32,93 +23,6 @@ from pyro.infer.mcmc.nuts import HMC
 
 pyro.set_rng_seed(10101)
 
-
-PyroLinear = pyro.nn.PyroModule[torch.nn.Linear]
-
-
-sigma = math.sqrt(1/(500 * 2e-5)) # = 10.0
-# sigma = 1
-
-
-class BNN(pyro.nn.PyroModule):
-    def __init__(self, input_size, hidden_size, output_size):
-        super().__init__()
-
-        self.input_size = input_size
-        self.hidden_size = hidden_size
-        self.output_size = output_size
-
-        self.fc1 = PyroLinear(input_size, hidden_size)
-        self.fc1.weight = nn.PyroSample(dist.Normal(0., sigma).expand((hidden_size, input_size)))
-        self.fc1.bias = nn.PyroSample(dist.Normal(0., sigma).expand((hidden_size, )))
-
-        self.fc2 = PyroLinear(hidden_size, output_size)
-        self.fc2.weight = nn.PyroSample(dist.Normal(0., sigma).expand((output_size, hidden_size)))
-        self.fc2.bias = nn.PyroSample(dist.Normal(0., sigma).expand((output_size, )))
-
-        self.sigmoid = torch.nn.Sigmoid()
-        self.log_softmax = torch.nn.LogSoftmax(dim=1)
-
-    def forward(self, batch):
-        if len(batch) == 2:
-            x, y = batch
-        else:
-            x = batch
-            y = None
-        x = x.view(-1, 28 * 28)
-        x = self.sigmoid(self.fc1(x))
-        x = self.fc2(x)
-        x = self.log_softmax(x)
-
-        with pyro.plate("data", x.shape[0]):
-            pyro.sample("obs", dist.Categorical(logits=x), obs=y)
-
-        return x
-
-
-def bnn_gamma(batch):
-    if len(batch) == 2:
-        x, y = batch
-    else:
-        x = batch
-        y = None
-
-    lambda_A = pyro.sample("lambda_A", dist.Gamma(1, 1))
-    lambda_a = pyro.sample("lambda_a", dist.Gamma(1, 1))
-    lambda_B = pyro.sample("lambda_B", dist.Gamma(1, 1))
-    lambda_b = pyro.sample("lambda_b", dist.Gamma(1, 1))
-
-    A = pyro.sample("fc1.weight", dist.Normal(torch.zeros(784, 100), torch.sqrt(1 / lambda_A)))
-    a = pyro.sample("fc1.bias", dist.Normal(torch.zeros(1, 100), torch.sqrt(1 / lambda_a)))
-    B = pyro.sample("fc2.weight", dist.Normal(torch.zeros(100, 10), torch.sqrt(1 / lambda_B)))
-    b = pyro.sample("fc2.bias", dist.Normal(torch.zeros(1, 10), torch.sqrt(1 / lambda_b)))
-
-    x = x.view(-1, 28 * 28)
-    x = F.relu(x @ A + a)
-    x = x @ B + b
-    x = F.log_softmax(x)
-
-    with pyro.plate("data", x.shape[0]):
-        pyro.sample("obs", dist.Categorical(logits=x), obs=y)
-
-    return x
-
-
-def mode_prediction(x, predictive):
-    preds = predictive(x)
-    obs = preds["obs"]
-    preds = torch.mode(obs, dim=0)[0]
-    return preds
-
-
-def sum_prediction(x, predictive):
-    preds = predictive(x)
-    log_prob = preds["_RETURN"]
-    log_prob_mean = torch.mean(log_prob, dim=0)
-    preds = torch.argmax(log_prob_mean, dim=1)
-    return preds
-
-
 def test(predictive, test_loader):
     len_test = len(test_loader)
     pbar = tqdm(range(len_test))
@@ -127,7 +31,7 @@ def test(predictive, test_loader):
 
     with torch.no_grad():
         for i, batch in enumerate(test_loader):
-            y_pred = sum_prediction(batch[0], predictive)
+            y_pred = mean_ll_prediction(batch[0], predictive)
             correct.append(y_pred == batch[1])
             pbar.update()
             pbar.set_postfix_str(f"b={(i+1):d}/{len_test:d}, acc={torch.cat(correct).to(dtype=torch.float32).mean().item():.3f}")
@@ -208,21 +112,6 @@ def test_sghmc(model, posterior_samples, test_loader):
     return acc
 
 
-class MNIST_50(Dataset):
-
-    def __init__(self, root: str, train: bool = True, transform: Optional[Callable] = None,
-                 target_transform: Optional[Callable] = None, download: bool = False, length=60000) -> None:
-        super().__init__()
-        self.mnist = datasets.MNIST(root, train, transform, target_transform, download)
-        self.length = length
-
-    def __len__(self) -> int:
-        return self.length
-
-    def __getitem__(self, item):
-        return self.mnist.__getitem__(item)
-
-
 def sghmc_reproduction(batch_size=500, num_epochs=800, suffix=""):
     train_dataset = MNIST_50('./data', train=True, download=True, transform=transforms.Compose([transforms.ToTensor(), ]), length=50000)
     # train_dataset = datasets.MNIST('./data', train=True, download=True, transform=transforms.Compose([transforms.ToTensor(), ]))
@@ -295,4 +184,4 @@ def sghmc_reproduction(batch_size=500, num_epochs=800, suffix=""):
 
 
 if __name__ == "__main__":
-    sghmc_reproduction(500, 800, "_sig")
+    sghmc_reproduction(500, 800, "_repr")
