@@ -96,7 +96,7 @@ def tune_nn_hyperparameters():
 
     print(f"Best lr={best_lr}")
 
-    np.savetxt("results/accs_svi.csv", np.array(accss[best_index]))
+    np.savetxt("results/accs_nn.csv", np.array(accss[best_index]))
 
     test_acc = test_nn(model, test_loader)
     print(f"Final test acc={test_acc:.3f}")
