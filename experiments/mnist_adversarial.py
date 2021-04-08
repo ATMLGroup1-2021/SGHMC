@@ -70,6 +70,7 @@ def adversarial_examples():
         p = make_prediction(predictor, x_letters)
         a_probs[name] = p[0]
         plt.figure()
+        plt.suptitle(f"{name} - Adversarial examples", fontsize=12)
         for i in range(10):
             plt.subplot(2, 5, i + 1)
             plt.bar(list(range(10)), [v.item() for v in p[i]], width=1.0)
@@ -84,6 +85,7 @@ def adversarial_examples():
         p = make_prediction(predictor, batch[0])
 
         plt.figure()
+        plt.suptitle(f"{name} - Real examples", fontsize=12)
         for i in range(10):
             plt.subplot(2,5,i+1)
             plt.bar(list(range(10)), [v.item() for v in p[i]], width=1.0)
